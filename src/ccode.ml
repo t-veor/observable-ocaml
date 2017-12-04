@@ -1,9 +1,7 @@
 (* ccode.ml *)
 (* ML representation of a subset of C to compile to. *)
 
-type cvar =
-  | Var of string * int
-  | TempVar of int
+type cvar = Ident.t
 
 and cexpr = 
   | CVar of cvar
@@ -11,9 +9,10 @@ and cexpr =
   | CLChar of char
   | CLString of string
   | CLFloat of float
-  | CUnOp of cunop * cvar
-  | CBinOp of cbinop * cvar * cvar
-  | CCall of cvar * cvar list
+  | CUnOp of cunop * cexpr
+  | CBinOp of cbinop * cexpr * cexpr
+  | CCall of cvar * cexpr list
+  | CCast of cexpr * ctype
 
 and cstatement = 
   | CDecl of cvar * ctype
@@ -22,6 +21,7 @@ and cstatement =
   | CBlock of cblock
   | CIfElse of cexpr * cblock * cblock
   | CWhile of cexpr * cblock
+  | CLoc of int * string
 
 and cblock = cstatement list
 
@@ -30,21 +30,15 @@ and cfunc = {
   args : (cvar * ctype) list;
   id : cvar;
   body : cblock;
+  loc : int * string;
 }
 
-and cunop =
-  | CNot
-  | CNeg
+and cunop = string
 
-and cbinop =
-  | CAdd
-  | CSub
-  | CMul
-  | CDiv
-  | CAnd
-  | COr
+and cbinop = string
 
 and ctype =
+  | CUInt
   | CInt
   | CFloat
   | CStr (* placeholder before we get proper strings *)
@@ -52,20 +46,8 @@ and ctype =
   | CPointer of ctype
   | CFuncPointer of ctype * ctype list
 
-and ccontext = {
+and ccode = {
+  preamble : cstatement list;
   funcs : cfunc list;
   main : cblock;
 }
-
-let append ctx stmts =
-  let { funcs; main } = ctx in
-  { funcs = funcs; main = main @ stmts }
-
-let lift ctx return_type args id =
-  let { funcs; main } = ctx in
-  {
-    funcs = { return_type; args; id; body = main } :: funcs;
-    main = [];
-  }
-
-let blank_ctx = { funcs = []; main = [] }

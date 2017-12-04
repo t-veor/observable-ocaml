@@ -1,5 +1,5 @@
-let id () = 0
+let rec fib a b = function
+  | 0 -> a
+  | n -> fib b (a + b) (n - 1)
 
-let f ?(a=true) (b: int) = b
-
-let _ = f 1
+let () = let n = fib 0 1 10 in print_string (string_of_int n)
