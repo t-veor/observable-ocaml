@@ -7,14 +7,14 @@ open Typecollect
 exception Undefined
 exception NotSupported of string
 
-let fresh_var () = Ident.create "temp"
+let fresh_var name = CVar (Ident.create name)
 
 let rec zip xs ys = match (xs, ys) with
   | x::xs, y::ys -> (x, y) :: zip xs ys
   | [], _ -> []
   | _, [] -> []
 
-let unpack_loc loc = 
+let unpack_loc loc =
   let { Location.loc_start } = loc in
   let { Lexing.pos_fname = fname; Lexing.pos_lnum = lnum } = loc_start in
   (lnum, fname)
@@ -27,11 +27,74 @@ let comp_code lambda types =
   let curr_loc = ref Location.none in
 
   (* Dirty shadowing to avoid referring to the types hash all the time *)
-  let set_type = set_type types in
-  let get_type = get_type types in
-  
+  let set_type v t = match v with
+    | CVar i -> set_type types i t
+    | CGlobalVar s -> ()
+  in
+  let get_type = function
+    | CVar i -> get_type types i
+    | CGlobalVar s -> CPointer CVoid
+  in
+
   (* Helper function for adding statements *)
   let add s = stmts := s :: !stmts in
+
+  (* Shortcut for declaring a temporary variable for an expression *)
+  let decl_assign ?(name="temp") exp ty =
+    let var = fresh_var name in
+    set_type var ty;
+    add (CDecl (var, ty));
+    add (CAssign (CIdent var, exp));
+    var
+  in
+
+  let name_exp var_name = CIdent (CGlobalVar var_name) in
+
+  (* Cast helper to deal with the different cases under which casting can occur *)
+  let cast old_ty new_ty exp =
+    if old_ty = new_ty then exp
+    else if old_ty = CValue then
+      begin
+        (* unbox CValue and cast to new type *)
+        match new_ty with
+          | CUInt
+          | CInt -> CCall (name_exp "GET_INT", [exp])
+          | CFloat -> CCall (name_exp "GET_FLOAT", [exp])
+          | CStr -> CCall (name_exp "GET_STRING", [exp])
+          | _ -> failwith ("bad type to unbox from: " ^
+                           Cprint.sprint Cprint.print_ctype new_ty)
+      end
+    else if new_ty = CValue then
+      begin
+        (* box value and cast to new type *)
+        match old_ty with
+          | CUInt
+          | CInt -> CCall (name_exp "BOX_INT", [exp])
+          | CFloat -> CCall (name_exp "BOX_FLOAT", [exp])
+          | CStr -> CCall (name_exp "BOX_STRING", [exp])
+          | _ -> failwith ("bad type to box: " ^
+                           Cprint.sprint Cprint.print_ctype old_ty)
+      end
+    else
+      begin
+        (* todo: currently just a dirty cast *)
+        Printf.printf "Warning: dirty cast between %s and %s"
+          (Cprint.sprint Cprint.print_ctype old_ty)
+          (Cprint.sprint Cprint.print_ctype new_ty);
+        CCast (exp, new_ty)
+      end
+  in
+
+  let assign (target_var, target_ty) (old_exp, old_ty) =
+    add @@ CAssign (target_var, cast old_ty target_ty old_exp)
+  in
+
+  let set_loc ev =
+    let { lev_loc } = ev in
+    curr_loc := lev_loc;
+    let lnum, fname = unpack_loc lev_loc in
+    add (CLoc (lnum, fname))
+  in
 
   (* Makes a new context for which stmts is now blank, executes f, and then
    * restores the old context, returning the result of f and the new context
@@ -59,7 +122,75 @@ let comp_code lambda types =
     | Const_immstring s -> (CLString s, CStr)
     | Const_pointer n -> (CLInt n, CPointer CVoid)
 
+    | Const_block (tag, args) ->
+        (* Just convert it into a regular Pmakeblock *)
+        let lams = List.map (fun x -> Lconst x) args in
+        let exp = Lprim (Pmakeblock (tag, Immutable, None), lams, !curr_loc) in
+        let var = comp_expr exp in
+        (CIdent var, get_type var)
+
     | c -> failwith "Unsupported constant"
+
+  (* Compiles the top-level module code.
+   * Similar to comp_expr, but deals with a few special structures such as
+   * top-level function declarations and Pmakeblocks.
+   *)
+  and comp_root exp =
+    match exp with
+      | Levent (body, ev) ->
+          set_loc ev;
+          comp_root body
+      | Llet (_, _, id, Lfunction { params; body }, rest) ->
+          (* Drop into non-toplevel for function body *)
+          let (rvar, fblock) = with_context (fun () ->
+            let rvar = comp_expr body in
+            add (CReturn rvar);
+            rvar
+          ) in
+          begin
+            match get_type (CVar id) with
+              | CFuncPointer (rt, arg_tys) ->
+                  funcs := {
+                    return_type = rt;
+                    args = zip (List.map (fun x -> CVar x) params) arg_tys;
+                    id = CVar id;
+                    body = fblock;
+                    loc = unpack_loc !curr_loc;
+                  } :: !funcs
+
+              | _ -> failwith "type of function was not a function pointer"
+          end;
+          comp_root rest
+
+      | Llet (_, _, id, arg, rest) ->
+          (* Declare a global constant *)
+          let ty = get_type (CVar id) in
+          preamble := CDecl (CVar id, ty) :: !preamble;
+          let res = comp_expr arg in
+          assign (CIdent (CVar id), ty) (CIdent res, get_type res);
+          comp_root rest
+
+      | Lletrec (decls, body) ->
+          (* Dirty hack - does this always work? *)
+          let expr = List.fold_right (fun (id, arg) rest ->
+            Llet(Strict, Pgenval, id, arg, rest)) decls body in
+          comp_root expr
+
+      | Lsequence (e1, e2) ->
+          comp_expr e1 |> ignore;
+          comp_root e2
+
+      | Lprim (Pmakeblock(_, Immutable, _), args, _) ->
+          (* module makeblock! *)
+          let var = fresh_var "module" in
+          let ty = CValue in
+          preamble := CDecl (var, ty) :: !preamble;
+          set_type var ty;
+          let res = comp_expr exp in
+          assign (CIdent var, ty) (CIdent res, get_type res);
+          var
+
+      | _ -> comp_expr exp
 
   (* Compiles an expression.
    * Always returns an identifier for which the result of the expression
@@ -70,15 +201,11 @@ let comp_code lambda types =
    *)
   and comp_expr exp =
     match exp with
-      | Lvar id -> id
+      | Lvar id -> CVar id
 
       | Lconst const ->
-          let var = fresh_var () in
           let (exp, ty) = comp_constant const in
-          set_type var ty;
-          add (CDecl (var, ty));
-          add (CAssign (var, exp));
-          var
+          decl_assign ~name:"const" exp ty
 
       | Lapply { ap_func; ap_args; ap_loc } ->
           curr_loc := ap_loc;
@@ -86,7 +213,7 @@ let comp_code lambda types =
           let args = List.fold_left
             (fun args exp -> let arg = comp_expr exp in arg :: args)
             [] ap_args |> List.rev in
-          
+
           (* Assert no partial application *)
           begin
             match get_type fvar with
@@ -94,40 +221,25 @@ let comp_code lambda types =
                   if List.length arg_tys <> List.length args
                   then failwith "Partial application is not supported"
                   else
-                    
-                    let exp = CCall (fvar, List.map (fun x -> CVar x) args) in
-                    let var = fresh_var () in
-                    set_type var rt;
-                    add (CDecl (var, rt));
-                    add (CAssign (var, exp));
-                    var
 
-              | _ -> failwith "fvar was not a function pointer"
+                    let exp = CCall
+                      (CIdent fvar, List.map (fun x -> CIdent x) args) in
+                    decl_assign ~name:"call_result" exp rt
+
+              | CPointer CVoid ->
+                  Printf.printf "Warning: void* call\n";
+                  let exp = CCall
+                    (CIdent fvar, List.map (fun x -> CIdent x) args) in
+                  decl_assign ~name:"call_result" exp (CPointer CVoid)
+
+              (* TODO: deal with cvalues as function pointers *)
+
+              | _ -> failwith
+                ((Cprint.sprint Cprint.print_cident fvar) ^ " was not a function pointer")
           end
 
-      | Lfunction _ -> failwith "bare Lfunction"
+      | Lfunction _ -> failwith "closures unsupported!"
 
-      | Llet (_, _, id, Lfunction { params; body }, rest) ->
-          let (rvar, fblock) = with_context (fun () ->
-            let rvar = comp_expr body in
-            add (CReturn rvar);
-            rvar
-          ) in
-          begin
-            match get_type id with
-              | CFuncPointer (rt, arg_tys) ->
-                  funcs := {
-                    return_type = rt;
-                    args = zip params arg_tys;
-                    id;
-                    body = fblock;
-                    loc = unpack_loc !curr_loc;
-                  } :: !funcs
-
-              | _ -> failwith "type of function was not a function pointer"
-          end;
-          comp_expr rest
-      
       (* [ let x = M in N ] =
        *
        * [M]
@@ -142,13 +254,13 @@ let comp_code lambda types =
        *)
       | Llet (_, _, id, arg, body) ->
           let arg_var = comp_expr arg in
-          let arg_ty = get_type id in
-          let temp = fresh_var () in
+          let arg_ty = get_type (CVar id) in
+          let temp = fresh_var "let_return" in
           let (rvar, lblock) = with_context (fun () ->
-            add (CDecl (id, arg_ty));
-            add (CAssign (id, CVar arg_var));
+            add (CDecl (CVar id, arg_ty));
+            assign (CIdent (CVar id), arg_ty) (CIdent arg_var, get_type arg_var);
             let rvar = comp_expr body in
-            add (CAssign (temp, CVar rvar));
+            assign (CIdent temp, get_type rvar) (CIdent rvar, get_type rvar);
             rvar
           ) in
           let rty = get_type rvar in
@@ -169,7 +281,7 @@ let comp_code lambda types =
       | Lswitch _ -> failwith "undefined"
 
       (* [ if M then N else O ] =
-       * 
+       *
        * [M]
        * decl(temp);
        * if (var(M)) {
@@ -183,26 +295,26 @@ let comp_code lambda types =
        *)
       | Lifthenelse (i, t, e) ->
           let ivar = comp_expr i in
-          let temp = fresh_var () in
+          let temp = fresh_var "ifelse_return" in
 
           let (tvar, tblock) = with_context (fun () ->
             let tvar = comp_expr t in
-            add (CAssign (temp, CVar tvar));
+            assign (CIdent temp, get_type tvar) (CIdent tvar, get_type tvar);
             tvar
           ) in
           let rty = get_type tvar in
 
           let (evar, eblock) = with_context (fun () ->
             let evar = comp_expr e in
-            add (CAssign (temp, CVar evar));
+            assign (CIdent temp, rty) (CIdent evar, get_type evar);
             evar
           ) in
 
           set_type temp rty;
           add (CDecl (temp, rty));
-          add (CIfElse (CVar ivar, tblock, eblock));
+          add (CIfElse (CIdent ivar, tblock, eblock));
           temp
-      
+
       | Lsequence (l1, l2) ->
           comp_expr l1 |> ignore;
           comp_expr l2
@@ -214,11 +326,8 @@ let comp_code lambda types =
       | Lassign _ -> failwith "undefined"
 
       | Levent (lam, ev) ->
-        let { lev_loc } = ev in
-        curr_loc := lev_loc;
-        let lnum, fname = unpack_loc lev_loc in
-        add (CLoc (lnum, fname));
-        comp_expr lam
+          set_loc ev;
+          comp_expr lam
 
       | _ -> failwith "Unsupported lambda term"
 
@@ -226,21 +335,14 @@ let comp_code lambda types =
   and comp_prim prim lambdas =
     let unop t rt op e =
       let a = comp_expr e in
-      let temp = fresh_var () in
-      set_type temp rt;
-      add (CDecl (temp, rt));
-      add (CAssign (temp, CUnOp (op, CCast (CVar a, t))));
-      temp
+      decl_assign ~name:"unop_result" (CUnOp (op, cast t rt (CIdent a))) rt
     in
 
     let bop t rt op e1 e2 =
       let a = comp_expr e1 in
       let b = comp_expr e2 in
-      let temp = fresh_var () in
-      set_type temp rt;
-      add (CDecl (temp, rt));
-      add (CAssign (temp, CBinOp (op, CCast (CVar a, t), CCast (CVar b, t))));
-      temp
+      decl_assign ~name:"binop_result"
+        (CBinOp (op, cast t rt (CIdent a), cast t rt (CIdent b))) rt
     in
 
     let int_unop = unop CInt CInt in
@@ -249,26 +351,32 @@ let comp_code lambda types =
     let float_bop = bop CFloat CFloat in
     let float_cmp_bop = bop CFloat CInt in
 
+    let block_field var n =
+      COffset (CField (CField (CDeref (CCall (name_exp "GET_BLOCK", [CIdent var])), "data"), "block"), n)
+    in
+
     match prim, lambdas with
-    (* Just ignore for now! *)
-    | Psetglobal _, _ -> comp_expr (List.hd lambdas)
-    | Pmakeblock _, _ ->
-        let var = fresh_var () in
-        let ty = CPointer CVoid in
-        set_type var ty;
+    | Pmakeblock (tag, _, _), contents ->
+        let vars = List.map comp_expr contents in
+        let block = decl_assign ~name:"block" (CCall (name_exp "MAKE_BLOCK", [CLInt tag])) (CPointer CBlockT) in
+        let malloc_expr = CCall (name_exp "MALLOC", [CBinOp ("*", CSizeOf CValue, CLInt (List.length vars))]) in
+        add (CAssign (CField (CField (CDeref (CIdent block), "data"), "block"), malloc_expr));
+        List.mapi (fun n v ->
+          assign (COffset (CField (CField (CDeref (CIdent block), "data"), "block"), n), CValue) (CIdent v, get_type v)) vars
+          |> ignore;
+        let var = decl_assign ~name:"makeblock" (CCall (name_exp "BOX_BLOCK", [CIdent block])) CValue in
         var
 
-    (* TODO: compile other primitives *)
     | Pidentity, [x] -> comp_expr x
 
     (* Ignore result and return NULL *)
     | Pignore, [x] ->
         comp_expr x |> ignore;
-        let var = fresh_var() in
+        let var = fresh_var "null" in
         let ty = CPointer CVoid in
         set_type var ty;
         add (CDecl (var, ty));
-        add (CAssign (var, CLInt 0));
+        assign (CIdent var, ty) (CLInt 0, ty);
         var
 
     | Popaque, _ -> failwith "Find out what Popaque does"
@@ -284,11 +392,17 @@ let comp_code lambda types =
           ap_specialised = Default_specialise;
         })
 
-    | Pgetglobal id, [] -> failwith "Pgetglobal is not supported"
+    | Pgetglobal id, [] -> CGlobalVar (Ident.name id)
 
     | Pfield i, [lam]
     | Pfloatfield i, [lam] ->
-        failwith "Pfield is not supported"
+        let e = comp_expr lam in
+        let var = fresh_var "field_access" in
+        let ty = CValue in
+        set_type var ty;
+        add (CDecl (var, ty));
+        assign (CIdent var, ty) (block_field e i, CValue);
+        var
 
     | Psetfield _, [lam] ->
         failwith "Psetfield is not supported"
@@ -315,24 +429,28 @@ let comp_code lambda types =
     | Pintcomp (Cge), [e1; e2] -> int_bop ">=" e1 e2
     | Poffsetint n, [e] ->
         let a = comp_expr e in
-        let temp = fresh_var () in
+        let t = get_type a in
+        let temp = fresh_var "offset_result" in
         set_type temp CInt;
         add (CDecl (temp, CInt));
-        add (CAssign (temp, CBinOp ("+", CCast (CVar a, CInt), CLInt n)));
+        add (CAssign (CIdent temp,
+                      CBinOp ("+", cast t CUInt (CIdent a), CLInt n)));
         temp
     | Pfloatofint, [e] ->
         let a = comp_expr e in
-        let temp = fresh_var () in
+        let t = get_type a in
+        let temp = fresh_var "float_cast" in
         set_type temp CFloat;
         add (CDecl (temp, CFloat));
-        add (CAssign (temp, CCast (CVar a, CFloat)));
+        add (CAssign (CIdent temp, cast t CFloat (CIdent a)));
         temp
     | Pintoffloat, [e] ->
         let a = comp_expr e in
-        let temp = fresh_var () in
+        let t = get_type a in
+        let temp = fresh_var "int_cast" in
         set_type temp CInt;
         add (CDecl (temp, CInt));
-        add (CAssign (temp, CCast (CVar a, CInt)));
+        add (CAssign (CIdent temp, cast t CInt (CIdent a)));
         temp
     | Paddfloat, [e1; e2] -> float_bop "+" e1 e2
     | Psubfloat, [e1; e2] -> float_bop "-" e1 e2
@@ -346,12 +464,21 @@ let comp_code lambda types =
     | Pfloatcomp (Cgt), [e1; e2] -> float_cmp_bop ">" e1 e2
     | Pfloatcomp (Cge), [e1; e2] -> float_cmp_bop ">=" e1 e2
 
+    | Pisint, [e] ->
+        let var = comp_expr e in
+        decl_assign (CCall (name_exp "IS_INT", [CIdent var])) CInt
 
     | _ -> failwith ("primitive " ^ (Printlambda.name_of_primitive prim) ^
                      "not supported")
 
   in
-  comp_expr lambda |> ignore;
+  preamble := CInclude "runtime.h" :: !preamble;
+  begin
+    match lambda with
+      | Lprim (Psetglobal id, [lam], _) ->
+          comp_root lam |> ignore
+      | _ -> failwith "unexpected root"
+  end;
   {
     preamble = List.rev !preamble;
     funcs = List.rev !funcs;

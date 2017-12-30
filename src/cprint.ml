@@ -3,6 +3,14 @@ open Format
 
 exception NotSupported of string
 
+let sprint f e =
+  let buf = Buffer.create 16 in
+  let fmt = Format.formatter_of_buffer buf in
+  f fmt e;
+  Format.pp_flush_formatter fmt;
+  Buffer.contents buf
+
+
 let rec comma_sep print_f out = function
   | [] -> ()
   | [x] -> print_f out x
@@ -11,11 +19,32 @@ let rec comma_sep print_f out = function
       fprintf out ",";
       comma_sep print_f out xs
 
-let rec print_cvar out var =
-  fprintf out "%s" (Ident.unique_name var)
+
+let rec print_cident out = function
+  | CVar var ->
+      fprintf out "%s" (Ident.unique_name var)
+  | CGlobalVar s ->
+      fprintf out "%s" s
+
 
 and print_cexpr out = function
-  | CVar v -> print_cvar out v
+  | CIdent i ->
+      print_cident out i
+  | CRef e ->
+      fprintf out "&(";
+      print_cexpr out e;
+      fprintf out ")"
+  | CDeref e ->
+      fprintf out "*(";
+      print_cexpr out e;
+      fprintf out ")"
+  | CField (e, f) ->
+      fprintf out "(";
+      print_cexpr out e;
+      fprintf out").%s" f
+  | COffset (e, i) ->
+      print_cexpr out e;
+      fprintf out "[%d]" i
   | CLInt i -> fprintf out "%d" i
   | CLChar c -> fprintf out "%C" c
   | CLString s -> fprintf out "%S" s
@@ -32,7 +61,7 @@ and print_cexpr out = function
       print_cexpr out e2;
       fprintf out ")"
   | CCall (v, es) ->
-      print_cvar out v;
+      print_cexpr out v;
       fprintf out "(";
       comma_sep print_cexpr out es;
       fprintf out ")"
@@ -42,22 +71,26 @@ and print_cexpr out = function
       fprintf out ")";
       print_cexpr out e;
       fprintf out ")"
+  | CSizeOf t ->
+      fprintf out "sizeof(";
+      print_ctype out t;
+      fprintf out ")"
 
 
 and print_cstatement out = function
   | CDecl (v, t) ->
       print_ctype out t;
       fprintf out " ";
-      print_cvar out v;
+      print_cident out v;
       fprintf out ";"
-  | CAssign (v, e) ->
-      print_cvar out v;
+  | CAssign (l, e) ->
+      print_cexpr out l;
       fprintf out "=";
       print_cexpr out e;
       fprintf out ";"
   | CReturn v ->
       fprintf out "return ";
-      print_cvar out v;
+      print_cident out v;
       fprintf out ";"
   | CBlock block ->
       fprintf out "{";
@@ -75,27 +108,33 @@ and print_cstatement out = function
       print_cexpr out e;
       fprintf out ")";
       print_cblock out b;
-  | CLoc (l, f) ->
+  | CLoc (l, f) when f <> "_none_" ->
       fprintf out "\n#line %d %s\n" l f
+  | CLoc _ -> ()
+  | CInclude f ->
+      fprintf out "\n#include <%s>\n" f
+
 
 and print_cblock out block =
   fprintf out "{";
   List.fold_left (fun () x -> print_cstatement out x) () block |> ignore;
   fprintf out "}"
 
+
 and print_cfunc out = function
   | { return_type; args; id; body; loc = (lnum, fname) } ->
       print_cstatement out (CLoc (lnum, fname));
       print_ctype out return_type;
       fprintf out " ";
-      print_cvar out id;
+      print_cident out id;
       fprintf out "(";
       comma_sep (fun out (v, t) ->
         print_ctype out t;
         fprintf out " ";
-        print_cvar out v) out args;
+        print_cident out v) out args;
       fprintf out ")";
       print_cblock out body
+
 
 and print_ctype out = function
   | CUInt -> fprintf out "unsigned int"
@@ -103,6 +142,9 @@ and print_ctype out = function
   | CFloat -> fprintf out "double"
   | CStr -> fprintf out "char*"
   | CVoid -> fprintf out "void"
+  | CValue -> fprintf out "ocaml_t"
+  | CBlockT -> fprintf out "ocaml_block_t"
+  | CNamedType i -> fprintf out "%s" (Ident.unique_name i)
   | CPointer t ->
       print_ctype out t;
       fprintf out "*"
@@ -111,11 +153,12 @@ and print_ctype out = function
       fprintf out "(";
       print_ctype out ret;
       fprintf out ")";
-      fprintf out "(*f)";
+      fprintf out "(*)";
       fprintf out "(";
       comma_sep print_ctype out args;
       fprintf out ")"
       (* raise (NotSupported "Function pointers are not supported") *)
+
 
 and print_ccode out = function
   | { preamble; funcs; main } ->

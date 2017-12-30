@@ -18,7 +18,7 @@ let string_of_ctype t =
   Format.pp_print_flush formatter ();
   Buffer.contents strbuf
 
-let set_type t id t1 = 
+let set_type t id t1 =
   try
     let t2 = IdentHash.find t id in
     if t1 <> t2 then

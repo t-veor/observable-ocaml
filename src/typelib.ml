@@ -23,7 +23,8 @@ let rec comp_type = function
     | Tconstr (Path.Pident { Ident.name = "bool" }, [], _) -> CInt
     | Tconstr (Path.Pident { Ident.name = "unit" }, [], _) -> CPointer CVoid
 
+    | Tconstr _ -> CValue
+
     | Tlink t -> comp_type t
 
     | _ -> failwith "Unsupported type"
-

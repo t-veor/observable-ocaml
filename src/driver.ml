@@ -17,7 +17,7 @@ let implementation ppf sourcefile outputprefix =
   with x ->
     Location.report_exception ppf x;
     exit 2
-  in 
+  in
   let types = Typecollect.scrape lambda in
     Printlambda.lambda ppf lambda;
     Format.fprintf ppf "\n";
