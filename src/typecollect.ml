@@ -4,11 +4,18 @@
 open Lambda
 open Types
 open Typelib
+open Primitive
 
 module IdentHash = Hashtbl.Make(struct
   type t = Ident.t
   let equal = Ident.same
   let hash = Ident.hash
+end)
+
+module ExternHash = Hashtbl.Make(struct
+  type t = string
+  let equal x y = x = y
+  let hash = Hashtbl.hash
 end)
 
 let string_of_ctype t =
@@ -39,9 +46,23 @@ let get_type t id =
       (Ident.unique_name id);
     Ccode.CPointer Ccode.CVoid
 
+let set_extern_id e prim_name t1 =
+  try
+    let t2 = ExternHash.find e prim_name in
+    if t1 <> t2 then
+      failwith (Printf.sprintf
+        "Types for external %s disagree (%s, %s)" prim_name
+        (string_of_ctype t1) (string_of_ctype t2))
+    else ()
+  with Not_found ->
+    Printf.printf "Type of external %s is %s\n" prim_name
+      (string_of_ctype t1);
+    ExternHash.add e prim_name t1
+
 let scrape lam =
   let t = IdentHash.create 16 in
-  let rec scrape_helper t = iter (fun lam ->
+  let e = ExternHash.create 16 in
+  let rec scrape_helper lam = iter (fun lam ->
       begin
         match lam with
           | Levent (_, ev) ->
@@ -50,13 +71,17 @@ let scrape lam =
                 match path with
                   | Path.Pident id -> (
                       let t1 = comp_type val_desc.val_type in
-                      set_type t id t1
+                      set_type t id t1;
+                      match val_desc.val_kind with
+                        | Val_prim { prim_name } ->
+                            set_extern_id e prim_name t1
+                        | _ -> ()
                       )
                   | _ -> ()
               ) None env ()
           | _ -> ()
       end;
-      scrape_helper t lam
-    ) in
-  scrape_helper t lam;
-  t
+      scrape_helper lam
+    ) lam in
+  scrape_helper lam;
+  (t, e)

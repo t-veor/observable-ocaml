@@ -30,6 +30,7 @@ and cstatement =
   | CWhile of cexpr * cblock
   | CLoc of int * string
   | CInclude of string
+  | CSwitch of cexpr * (int * cblock) list * cblock option
 
 and cblock = cstatement list
 
@@ -51,7 +52,6 @@ and ctype =
   | CFloat
   | CStr (* placeholder before we get proper strings *)
   | CValue (* generic ocaml_t type *)
-  | CBlockT (* ocaml_block_t type, for Pmakeblock *)
   | CVoid
   | CPointer of ctype
   | CNamedType of Ident.t

@@ -78,6 +78,13 @@ and print_cexpr out = function
 
 
 and print_cstatement out = function
+  | CDecl (v, CFuncPointer (rt, args)) ->
+      print_ctype out rt;
+      fprintf out "(*";
+      print_cident out v;
+      fprintf out ")(";
+      comma_sep print_ctype out args;
+      fprintf out ");"
   | CDecl (v, t) ->
       print_ctype out t;
       fprintf out " ";
@@ -108,16 +115,31 @@ and print_cstatement out = function
       print_cexpr out e;
       fprintf out ")";
       print_cblock out b;
-  | CLoc (l, f) when f <> "_none_" ->
-      fprintf out "\n#line %d %s\n" l f
-  | CLoc _ -> ()
+  | CLoc (l, f) ->
+      fprintf out "\n#line %d \"%s\"\n" l f
   | CInclude f ->
       fprintf out "\n#include <%s>\n" f
+  | CSwitch (e, options, default) ->
+      fprintf out "switch(";
+      print_cexpr out e;
+      fprintf out "){";
+      List.iter (fun (i, b) ->
+        fprintf out "case %d:;" i;
+        print_cblock out b;
+        fprintf out "break;") options;
+      begin
+        match default with
+          | Some b ->
+              fprintf out "default:;";
+              List.iter (print_cstatement out) b
+          | None -> ()
+      end;
+      fprintf out "}"
 
 
 and print_cblock out block =
   fprintf out "{";
-  List.fold_left (fun () x -> print_cstatement out x) () block |> ignore;
+  List.iter (print_cstatement out) block;
   fprintf out "}"
 
 
@@ -137,22 +159,19 @@ and print_cfunc out = function
 
 
 and print_ctype out = function
-  | CUInt -> fprintf out "unsigned int"
-  | CInt -> fprintf out "int"
+  | CUInt -> fprintf out "uint64_t"
+  | CInt -> fprintf out "int64_t"
   | CFloat -> fprintf out "double"
   | CStr -> fprintf out "char*"
   | CVoid -> fprintf out "void"
   | CValue -> fprintf out "ocaml_t"
-  | CBlockT -> fprintf out "ocaml_block_t"
   | CNamedType i -> fprintf out "%s" (Ident.unique_name i)
   | CPointer t ->
       print_ctype out t;
       fprintf out "*"
   (* TODO: probably unify printing types and variables *)
   | CFuncPointer (ret, args) ->
-      fprintf out "(";
       print_ctype out ret;
-      fprintf out ")";
       fprintf out "(*)";
       fprintf out "(";
       comma_sep print_ctype out args;

@@ -1,5 +1,6 @@
 open Lambda
 open Types
+open Primitive
 open Ccode
 open Asttypes
 open Typecollect
@@ -19,7 +20,7 @@ let unpack_loc loc =
   let { Lexing.pos_fname = fname; Lexing.pos_lnum = lnum } = loc_start in
   (lnum, fname)
 
-let comp_code lambda types =
+let comp_code lambda (types, externals) =
   (* Note: these lists are in reverse order to make cons's constant time *)
   let preamble = ref ([] : cstatement list) in
   let funcs = ref ([] : cfunc list) in
@@ -50,8 +51,17 @@ let comp_code lambda types =
 
   let name_exp var_name = CIdent (CGlobalVar var_name) in
 
+  (* Block helpers *)
+  let block_field var n =
+    COffset (CCall (name_exp "GET_BLOCK", [CIdent var]), n + 1)
+  in
+  let block_tag exp =
+    CCall (name_exp "GET_INT",
+           [CDeref (CCall (name_exp "GET_BLOCK", [exp]))])
+  in
+
   (* Cast helper to deal with the different cases under which casting can occur *)
-  let cast old_ty new_ty exp =
+  let rec cast old_ty new_ty exp =
     if old_ty = new_ty then exp
     else if old_ty = CValue then
       begin
@@ -61,6 +71,7 @@ let comp_code lambda types =
           | CInt -> CCall (name_exp "GET_INT", [exp])
           | CFloat -> CCall (name_exp "GET_FLOAT", [exp])
           | CStr -> CCall (name_exp "GET_STRING", [exp])
+          | CFuncPointer _ -> CCast (CCall (name_exp "GET_FUNC", [exp]), new_ty)
           | _ -> failwith ("bad type to unbox from: " ^
                            Cprint.sprint Cprint.print_ctype new_ty)
       end
@@ -72,36 +83,45 @@ let comp_code lambda types =
           | CInt -> CCall (name_exp "BOX_INT", [exp])
           | CFloat -> CCall (name_exp "BOX_FLOAT", [exp])
           | CStr -> CCall (name_exp "BOX_STRING", [exp])
+          | CFuncPointer _ -> CCall (name_exp "BOX_FUNC", [exp])
+          | CPointer CVoid -> (* Change null types to just ints? *)
+              CCall (name_exp "BOX_INT", [cast old_ty CInt exp])
           | _ -> failwith ("bad type to box: " ^
                            Cprint.sprint Cprint.print_ctype old_ty)
       end
     else
       begin
         (* todo: currently just a dirty cast *)
-        Printf.printf "Warning: dirty cast between %s and %s"
+        Printf.printf "Warning: dirty cast between %s and %s\n"
           (Cprint.sprint Cprint.print_ctype old_ty)
           (Cprint.sprint Cprint.print_ctype new_ty);
         CCast (exp, new_ty)
       end
-  in
 
-  let assign (target_var, target_ty) (old_exp, old_ty) =
+  and assign (target_var, target_ty) (old_exp, old_ty) =
     add @@ CAssign (target_var, cast old_ty target_ty old_exp)
-  in
 
-  let set_loc ev =
+  and unify_types t1 t2 =
+    if t1 = t2 then t1
+    else if t1 = CValue || t2 = CValue then CValue
+    else if t1 = CPointer CVoid then t2
+    else if t2 = CPointer CVoid then t1
+    else failwith (Printf.sprintf "cannot unify types %s and %s\n"
+      (Cprint.sprint Cprint.print_ctype t1)
+      (Cprint.sprint Cprint.print_ctype t2))
+
+  and set_loc ev =
     let { lev_loc } = ev in
     curr_loc := lev_loc;
     let lnum, fname = unpack_loc lev_loc in
     add (CLoc (lnum, fname))
-  in
 
   (* Makes a new context for which stmts is now blank, executes f, and then
    * restores the old context, returning the result of f and the new context
    *)
-  let rec with_context f =
+  and with_context ?(init_block=[]) f =
     let curr_stmts = !stmts in
-    stmts := [];
+    stmts := List.rev init_block;
     let res = f () in
     let nstmts = !stmts in
     stmts := curr_stmts;
@@ -141,22 +161,28 @@ let comp_code lambda types =
           set_loc ev;
           comp_root body
       | Llet (_, _, id, Lfunction { params; body }, rest) ->
-          (* Drop into non-toplevel for function body *)
-          let (rvar, fblock) = with_context (fun () ->
-            let rvar = comp_expr body in
-            add (CReturn rvar);
-            rvar
-          ) in
           begin
             match get_type (CVar id) with
               | CFuncPointer (rt, arg_tys) ->
+                  (* set types for each of the args, just in case *)
+                  let args = zip (List.map (fun x -> CVar x) params) arg_tys in
+                  List.fold_left (fun () (arg, ty) -> set_type arg ty) () args;
+                  (* Drop into non-toplevel for function body *)
+                  let (rvar, fblock) = with_context (fun () ->
+                    let rvar = comp_expr body in
+                    add (CReturn rvar);
+                    rvar
+                  ) in
+                  let temp_var = fresh_var "func" in
                   funcs := {
                     return_type = rt;
-                    args = zip (List.map (fun x -> CVar x) params) arg_tys;
-                    id = CVar id;
+                    args;
+                    id = temp_var;
                     body = fblock;
                     loc = unpack_loc !curr_loc;
-                  } :: !funcs
+                  } :: !funcs;
+                  preamble := CDecl (CVar id, get_type (CVar id)) :: !preamble;
+                  add (CAssign (CIdent (CVar id), CRef (CIdent temp_var)))
 
               | _ -> failwith "type of function was not a function pointer"
           end;
@@ -278,7 +304,69 @@ let comp_code lambda types =
           curr_loc := loc;
           comp_prim p ls
 
-      | Lswitch _ -> failwith "undefined"
+      (* Switch statements contain some which switch on ints, and some that
+       * switch on tags
+       *
+       * Convert this into two sets of switch statements, one for if the value
+       * is an int, and the other for if the value is a block
+       *)
+      | Lswitch (lam, sw) ->
+          let var = comp_expr lam in
+          let var = cast (get_type var) CValue (CIdent var) in
+          let condition = CCall (name_exp "IS_INT", [var]) in
+          let rvar = fresh_var "switch_return" in
+
+          (* Messy threading - compile half way, don't assign yet,
+           * then figure out the return type, and then add the assignments
+           * back in
+           *)
+          let int_blocks = List.map (fun (i, lam) ->
+            (i, with_context (fun () -> comp_expr lam))) sw.sw_consts in
+          let tag_blocks = List.map (fun (i, lam) ->
+            (i, with_context (fun () -> comp_expr lam))) sw.sw_blocks in
+          let fail_block = match sw.sw_failaction with
+            | Some lam -> Some (with_context (fun () -> comp_expr lam))
+            | None -> None
+          in
+
+          (* Determine type! *)
+          (* No composition operator in OCaml why *)
+          let rty = List.fold_left unify_types (CPointer CVoid)
+            (List.map (fun (_, (v, _)) -> get_type v) int_blocks) in
+          let rty = List.fold_left unify_types rty
+            (List.map (fun (_, (v, _)) -> get_type v) tag_blocks) in
+          let rty = match fail_block with
+            | Some (v, _) -> unify_types rty (get_type v)
+            | None -> rty
+          in
+
+          (* Now add appropriate assignments back to each block *)
+          let int_blocks = List.map (fun (i, (v, b)) ->
+            let (_, b) = with_context ~init_block:b (fun () ->
+              assign (CIdent rvar, rty) (CIdent v, get_type v); v) in
+            (i, b)) int_blocks in
+          let tag_blocks = List.map (fun (i, (v, b)) ->
+            let (_, b) = with_context ~init_block:b (fun () ->
+              assign (CIdent rvar, rty) (CIdent v, get_type v); v) in
+            (i, b)) tag_blocks in
+          let fail_block = match fail_block with
+            | Some (v, b) ->
+                let (_, b) = with_context ~init_block:b (fun () ->
+                  assign (CIdent rvar, rty) (CIdent v, get_type v); v) in
+                Some b
+            | None -> None
+          in
+
+          (* Construct the switch statements *)
+          let int_switch = CSwitch
+            (CCall (name_exp "GET_INT", [var]), int_blocks, fail_block) in
+          let tag_switch = CSwitch
+            (block_tag var, tag_blocks, fail_block) in
+
+          (* Construct the if statement *)
+          add (CDecl (rvar, rty));
+          add (CIfElse (condition, [int_switch], [tag_switch]));
+          rvar
 
       (* [ if M then N else O ] =
        *
@@ -293,33 +381,51 @@ let comp_code lambda types =
        * }
        * -> temp
        *)
+      (* TODO: Need to implement basic type unification to figure out the return type!! *)
       | Lifthenelse (i, t, e) ->
           let ivar = comp_expr i in
+          let iexp = cast (get_type ivar) CInt (CIdent ivar) in
           let temp = fresh_var "ifelse_return" in
 
-          let (tvar, tblock) = with_context (fun () ->
-            let tvar = comp_expr t in
-            assign (CIdent temp, get_type tvar) (CIdent tvar, get_type tvar);
-            tvar
-          ) in
-          let rty = get_type tvar in
+          (* Do partial compilation here to figure out types of variables *)
+          let (tvar, tblock) = with_context (fun () -> comp_expr t) in
+          let (evar, eblock) = with_context (fun () -> comp_expr e) in
 
-          let (evar, eblock) = with_context (fun () ->
-            let evar = comp_expr e in
-            assign (CIdent temp, rty) (CIdent evar, get_type evar);
-            evar
+          let rty = unify_types (get_type tvar) (get_type evar) in
+
+          (* Add the assignments into the blocks now that you know them *)
+          let (_, tblock) = with_context ~init_block:tblock (fun () ->
+            assign (CIdent temp, rty) (CIdent tvar, get_type tvar); tvar
+          ) in
+          let (_, eblock) = with_context ~init_block:eblock (fun () ->
+            assign (CIdent temp, rty) (CIdent evar, get_type evar); evar
           ) in
 
           set_type temp rty;
           add (CDecl (temp, rty));
-          add (CIfElse (CIdent ivar, tblock, eblock));
+          add (CIfElse (iexp, tblock, eblock));
           temp
 
       | Lsequence (l1, l2) ->
           comp_expr l1 |> ignore;
           comp_expr l2
 
-      | Lwhile (l, x) -> failwith "undefined"
+      | Lwhile (cond, body) ->
+          let cvar = fresh_var "while_cond" in
+          set_type cvar CInt;
+          add (CDecl (cvar, CInt));
+
+          let ctemp = comp_expr cond in
+          assign (CIdent cvar, CInt) (CIdent ctemp, get_type ctemp);
+
+          let (_, block) = with_context (fun () ->
+            comp_expr body |> ignore;
+            let ctemp = comp_expr cond in
+            assign (CIdent cvar, CInt) (CIdent ctemp, get_type ctemp);
+            ctemp
+          ) in
+          add (CWhile (CIdent cvar, block));
+          decl_assign ~name:"while_return" (CLInt 0) (CPointer CVoid)
 
       | Lfor _ -> failwith "undefined"
 
@@ -335,14 +441,16 @@ let comp_code lambda types =
   and comp_prim prim lambdas =
     let unop t rt op e =
       let a = comp_expr e in
-      decl_assign ~name:"unop_result" (CUnOp (op, cast t rt (CIdent a))) rt
+      decl_assign ~name:"unop_result"
+        (CUnOp (op, cast (get_type a) t (CIdent a))) rt
     in
 
     let bop t rt op e1 e2 =
       let a = comp_expr e1 in
       let b = comp_expr e2 in
       decl_assign ~name:"binop_result"
-        (CBinOp (op, cast t rt (CIdent a), cast t rt (CIdent b))) rt
+        (CBinOp (op, cast (get_type a) t (CIdent a),
+                     cast (get_type b) t (CIdent b))) rt
     in
 
     let int_unop = unop CInt CInt in
@@ -351,125 +459,145 @@ let comp_code lambda types =
     let float_bop = bop CFloat CFloat in
     let float_cmp_bop = bop CFloat CInt in
 
-    let block_field var n =
-      COffset (CField (CField (CDeref (CCall (name_exp "GET_BLOCK", [CIdent var])), "data"), "block"), n)
-    in
-
     match prim, lambdas with
-    | Pmakeblock (tag, _, _), contents ->
-        let vars = List.map comp_expr contents in
-        let block = decl_assign ~name:"block" (CCall (name_exp "MAKE_BLOCK", [CLInt tag])) (CPointer CBlockT) in
-        let malloc_expr = CCall (name_exp "MALLOC", [CBinOp ("*", CSizeOf CValue, CLInt (List.length vars))]) in
-        add (CAssign (CField (CField (CDeref (CIdent block), "data"), "block"), malloc_expr));
-        List.mapi (fun n v ->
-          assign (COffset (CField (CField (CDeref (CIdent block), "data"), "block"), n), CValue) (CIdent v, get_type v)) vars
-          |> ignore;
-        let var = decl_assign ~name:"makeblock" (CCall (name_exp "BOX_BLOCK", [CIdent block])) CValue in
-        var
+      | Pmakeblock (tag, _, _), contents ->
+          let vars = List.map comp_expr contents in
+          let blocklen = List.length vars in
+          let sizeof = CBinOp ("*", CSizeOf CValue, CLInt (blocklen + 1)) in
+          let malloc_expr = CCall (name_exp "MALLOC", [sizeof]) in
+          let block_expr = CCall (name_exp "BOX_BLOCK", [malloc_expr]) in
+          let block = decl_assign ~name:"block" block_expr CValue in
+          assign (CDeref (CCall (name_exp "GET_BLOCK", [CIdent block])), CValue)
+                 (CLInt tag, CInt);
+          List.iteri (fun n v ->
+            assign (block_field block n, CValue) (CIdent v, get_type v)) vars;
+          block
 
-    | Pidentity, [x] -> comp_expr x
+      | Pidentity, [x] -> comp_expr x
 
-    (* Ignore result and return NULL *)
-    | Pignore, [x] ->
-        comp_expr x |> ignore;
-        let var = fresh_var "null" in
-        let ty = CPointer CVoid in
-        set_type var ty;
-        add (CDecl (var, ty));
-        assign (CIdent var, ty) (CLInt 0, ty);
-        var
+      (* Ignore result and return NULL *)
+      | Pignore, [x] ->
+          comp_expr x |> ignore;
+          let var = fresh_var "null" in
+          let ty = CPointer CVoid in
+          set_type var ty;
+          add (CDecl (var, ty));
+          assign (CIdent var, ty) (CLInt 0, ty);
+          var
 
-    | Popaque, _ -> failwith "Find out what Popaque does"
+      | Popaque, _ -> failwith "Find out what Popaque does"
 
-    | Pdirapply, [func;arg]
-    | Prevapply, [arg;func] ->
-        comp_expr (Lapply {
-          ap_should_be_tailcall = false;
-          ap_loc = !curr_loc;
-          ap_func = func;
-          ap_args = [arg];
-          ap_inlined = Default_inline;
-          ap_specialised = Default_specialise;
-        })
+      | Pdirapply, [func;arg]
+      | Prevapply, [arg;func] ->
+          comp_expr (Lapply {
+            ap_should_be_tailcall = false;
+            ap_loc = !curr_loc;
+            ap_func = func;
+            ap_args = [arg];
+            ap_inlined = Default_inline;
+            ap_specialised = Default_specialise;
+          })
 
-    | Pgetglobal id, [] -> CGlobalVar (Ident.name id)
+      | Pgetglobal id, [] -> CGlobalVar (Ident.name id)
 
-    | Pfield i, [lam]
-    | Pfloatfield i, [lam] ->
-        let e = comp_expr lam in
-        let var = fresh_var "field_access" in
-        let ty = CValue in
-        set_type var ty;
-        add (CDecl (var, ty));
-        assign (CIdent var, ty) (block_field e i, CValue);
-        var
+      | Pfield i, [lam]
+      | Pfloatfield i, [lam] ->
+          let e = comp_expr lam in
+          let var = fresh_var "field_access" in
+          let ty = CValue in
+          set_type var ty;
+          add (CDecl (var, ty));
+          assign (CIdent var, ty) (block_field e i, CValue);
+          var
 
-    | Psetfield _, [lam] ->
-        failwith "Psetfield is not supported"
+      | Psetfield (i, _, _), [trg; lam] ->
+          let block = comp_expr trg in
+          let var = comp_expr lam in
+          assign (block_field block i, CValue) (CIdent var, get_type var);
+          var
 
-    | Psequand, [e1; e2] -> int_bop "&&" e1 e2
-    | Psequor, [e1; e2] -> int_bop "||" e1 e2
-    | Paddint, [e1; e2] -> int_bop "+" e1 e2
-    | Psubint, [e1; e2] -> int_bop "-" e1 e2
-    | Pmulint, [e1; e2] -> int_bop "*" e1 e2
-    | Pdivint _, [e1; e2] -> int_bop "/" e1 e2
-    | Pmodint _, [e1; e2] -> int_bop "%" e1 e2
-    | Pandint, [e1; e2] -> int_bop "&" e1 e2
-    | Porint, [e1; e2] -> int_bop "|" e1 e2
-    | Pxorint, [e1; e2] -> int_bop "^" e1 e2
-    | Plslint, [e1; e2] -> int_bop "<<" e1 e2
-    | Plsrint, [e1; e2] -> bop CUInt CInt ">>" e1 e2
-    | Pasrint, [e1; e2] -> int_bop ">>" e1 e2
-    | Pnegint, [e] -> int_unop "-" e
-    | Pintcomp (Ceq), [e1; e2] -> int_bop "==" e1 e2
-    | Pintcomp (Cneq), [e1; e2] -> int_bop "!=" e1 e2
-    | Pintcomp (Clt), [e1; e2] -> int_bop "<" e1 e2
-    | Pintcomp (Cle), [e1; e2] -> int_bop "<=" e1 e2
-    | Pintcomp (Cgt), [e1; e2] -> int_bop ">" e1 e2
-    | Pintcomp (Cge), [e1; e2] -> int_bop ">=" e1 e2
-    | Poffsetint n, [e] ->
-        let a = comp_expr e in
-        let t = get_type a in
-        let temp = fresh_var "offset_result" in
-        set_type temp CInt;
-        add (CDecl (temp, CInt));
-        add (CAssign (CIdent temp,
-                      CBinOp ("+", cast t CUInt (CIdent a), CLInt n)));
-        temp
-    | Pfloatofint, [e] ->
-        let a = comp_expr e in
-        let t = get_type a in
-        let temp = fresh_var "float_cast" in
-        set_type temp CFloat;
-        add (CDecl (temp, CFloat));
-        add (CAssign (CIdent temp, cast t CFloat (CIdent a)));
-        temp
-    | Pintoffloat, [e] ->
-        let a = comp_expr e in
-        let t = get_type a in
-        let temp = fresh_var "int_cast" in
-        set_type temp CInt;
-        add (CDecl (temp, CInt));
-        add (CAssign (CIdent temp, cast t CInt (CIdent a)));
-        temp
-    | Paddfloat, [e1; e2] -> float_bop "+" e1 e2
-    | Psubfloat, [e1; e2] -> float_bop "-" e1 e2
-    | Pmulfloat, [e1; e2] -> float_bop "*" e1 e2
-    | Pdivfloat, [e1; e2] -> float_bop "/" e1 e2
-    | Pnegfloat, [e] -> float_unop "-" e
-    | Pfloatcomp (Ceq), [e1; e2] -> float_cmp_bop "==" e1 e2
-    | Pfloatcomp (Cneq), [e1; e2] -> float_cmp_bop "!=" e1 e2
-    | Pfloatcomp (Clt), [e1; e2] -> float_cmp_bop "<" e1 e2
-    | Pfloatcomp (Cle), [e1; e2] -> float_cmp_bop "<=" e1 e2
-    | Pfloatcomp (Cgt), [e1; e2] -> float_cmp_bop ">" e1 e2
-    | Pfloatcomp (Cge), [e1; e2] -> float_cmp_bop ">=" e1 e2
+      | Psequand, [e1; e2] -> int_bop "&&" e1 e2
+      | Psequor, [e1; e2] -> int_bop "||" e1 e2
+      | Paddint, [e1; e2] -> int_bop "+" e1 e2
+      | Psubint, [e1; e2] -> int_bop "-" e1 e2
+      | Pmulint, [e1; e2] -> int_bop "*" e1 e2
+      | Pdivint _, [e1; e2] -> int_bop "/" e1 e2
+      | Pmodint _, [e1; e2] -> int_bop "%" e1 e2
+      | Pandint, [e1; e2] -> int_bop "&" e1 e2
+      | Porint, [e1; e2] -> int_bop "|" e1 e2
+      | Pxorint, [e1; e2] -> int_bop "^" e1 e2
+      | Plslint, [e1; e2] -> int_bop "<<" e1 e2
+      | Plsrint, [e1; e2] -> bop CUInt CInt ">>" e1 e2
+      | Pasrint, [e1; e2] -> int_bop ">>" e1 e2
+      | Pnegint, [e] -> int_unop "-" e
+      | Pintcomp (Ceq), [e1; e2] -> int_bop "==" e1 e2
+      | Pintcomp (Cneq), [e1; e2] -> int_bop "!=" e1 e2
+      | Pintcomp (Clt), [e1; e2] -> int_bop "<" e1 e2
+      | Pintcomp (Cle), [e1; e2] -> int_bop "<=" e1 e2
+      | Pintcomp (Cgt), [e1; e2] -> int_bop ">" e1 e2
+      | Pintcomp (Cge), [e1; e2] -> int_bop ">=" e1 e2
+      | Poffsetint n, [e] ->
+          let a = comp_expr e in
+          let t = get_type a in
+          let temp = fresh_var "offset_result" in
+          set_type temp CInt;
+          add (CDecl (temp, CInt));
+          add (CAssign (CIdent temp,
+                        CBinOp ("+", cast t CUInt (CIdent a), CLInt n)));
+          temp
+      | Pfloatofint, [e] ->
+          let a = comp_expr e in
+          let t = get_type a in
+          let temp = fresh_var "float_cast" in
+          set_type temp CFloat;
+          add (CDecl (temp, CFloat));
+          add (CAssign (CIdent temp, cast t CFloat (CIdent a)));
+          temp
+      | Pintoffloat, [e] ->
+          let a = comp_expr e in
+          let t = get_type a in
+          let temp = fresh_var "int_cast" in
+          set_type temp CInt;
+          add (CDecl (temp, CInt));
+          add (CAssign (CIdent temp, cast t CInt (CIdent a)));
+          temp
+      | Paddfloat, [e1; e2] -> float_bop "+" e1 e2
+      | Psubfloat, [e1; e2] -> float_bop "-" e1 e2
+      | Pmulfloat, [e1; e2] -> float_bop "*" e1 e2
+      | Pdivfloat, [e1; e2] -> float_bop "/" e1 e2
+      | Pnegfloat, [e] -> float_unop "-" e
+      | Pfloatcomp (Ceq), [e1; e2] -> float_cmp_bop "==" e1 e2
+      | Pfloatcomp (Cneq), [e1; e2] -> float_cmp_bop "!=" e1 e2
+      | Pfloatcomp (Clt), [e1; e2] -> float_cmp_bop "<" e1 e2
+      | Pfloatcomp (Cle), [e1; e2] -> float_cmp_bop "<=" e1 e2
+      | Pfloatcomp (Cgt), [e1; e2] -> float_cmp_bop ">" e1 e2
+      | Pfloatcomp (Cge), [e1; e2] -> float_cmp_bop ">=" e1 e2
 
-    | Pisint, [e] ->
-        let var = comp_expr e in
-        decl_assign (CCall (name_exp "IS_INT", [CIdent var])) CInt
+      | Pisint, [e] ->
+          let var = comp_expr e in
+          decl_assign (CCall (name_exp "IS_INT", [CIdent var])) CInt
 
-    | _ -> failwith ("primitive " ^ (Printlambda.name_of_primitive prim) ^
-                     "not supported")
+      | Pccall { prim_name; prim_arity }, args ->
+          begin
+            assert (List.length args = prim_arity);
+            try
+              let func_type = ExternHash.find externals prim_name in
+              match func_type with
+                | CFuncPointer (rty, arg_tys) ->
+                    let args = List.map (fun (l, a) ->
+                      let v = comp_expr l in
+                      let t = get_type v in
+                      cast t a (CIdent v)) (zip args arg_tys)
+                    in
+                    let exp = CCall (name_exp prim_name, args) in
+                    decl_assign ~name:"extern_call" exp rty
+                | _ -> failwith @@ "Nonfunction external " ^ prim_name
+            with Not_found ->
+              failwith @@ "External " ^ prim_name ^ " not found"
+          end
+
+      | _ -> failwith ("primitive " ^ (Printlambda.name_of_primitive prim) ^
+                       " not supported")
 
   in
   preamble := CInclude "runtime.h" :: !preamble;
