@@ -315,6 +315,7 @@ let comp_code lambda (types, externals) =
           let var = cast (get_type var) CValue (CIdent var) in
           let condition = CCall (name_exp "IS_INT", [var]) in
           let rvar = fresh_var "switch_return" in
+          let fail_label = Ident.unique_name (Ident.create "switch_fail") in
 
           (* Messy threading - compile half way, don't assign yet,
            * then figure out the return type, and then add the assignments
@@ -325,7 +326,10 @@ let comp_code lambda (types, externals) =
           let tag_blocks = List.map (fun (i, lam) ->
             (i, with_context (fun () -> comp_expr lam))) sw.sw_blocks in
           let fail_block = match sw.sw_failaction with
-            | Some lam -> Some (with_context (fun () -> comp_expr lam))
+            | Some lam ->
+                Some (with_context (fun () ->
+                  add (CLabel fail_label);
+                  comp_expr lam))
             | None -> None
           in
 
@@ -358,14 +362,24 @@ let comp_code lambda (types, externals) =
           in
 
           (* Construct the switch statements *)
+          let fail_goto = match fail_block with
+            | Some _ -> Some [CGoto fail_label]
+            | None -> None
+          in
           let int_switch = CSwitch
-            (CCall (name_exp "GET_INT", [var]), int_blocks, fail_block) in
+            (CCall (name_exp "GET_INT", [var]), int_blocks, fail_goto) in
           let tag_switch = CSwitch
-            (block_tag var, tag_blocks, fail_block) in
+            (block_tag var, tag_blocks, fail_goto) in
 
           (* Construct the if statement *)
+          let ifstmt = CIfElse (condition, [int_switch],
+            match fail_block with
+              | Some b -> [CIfElse (CLInt 1, [tag_switch], b)]
+              | None -> [tag_switch]
+            ) in
+
           add (CDecl (rvar, rty));
-          add (CIfElse (condition, [int_switch], [tag_switch]));
+          add ifstmt;
           rvar
 
       (* [ if M then N else O ] =
@@ -381,7 +395,6 @@ let comp_code lambda (types, externals) =
        * }
        * -> temp
        *)
-      (* TODO: Need to implement basic type unification to figure out the return type!! *)
       | Lifthenelse (i, t, e) ->
           let ivar = comp_expr i in
           let iexp = cast (get_type ivar) CInt (CIdent ivar) in
@@ -427,9 +440,59 @@ let comp_code lambda (types, externals) =
           add (CWhile (CIdent cvar, block));
           decl_assign ~name:"while_return" (CLInt 0) (CPointer CVoid)
 
-      | Lfor _ -> failwith "undefined"
+      | Lfor (id, s, e, dir, body) ->
+          (* eh, let's not bother implementing for loop syntax
+           * just compile it to a while loop
+           *)
+          let comp_op, incr_op = match dir with
+            | Upto -> ("<=", "++")
+            | Downto -> (">=", "--")
+          in
+
+          let svar = comp_expr s in
+          let evar = comp_expr e in
+
+          let var = CVar id in
+          set_type var CInt;
+          add (CDecl (var, CInt));
+          assign (CIdent var, CInt) (CIdent svar, get_type svar);
+          let condition = CBinOp (comp_op,
+            CIdent var, cast (get_type evar) CInt (CIdent evar)) in
+
+          let (_, block) = with_context (fun () ->
+            let rvar = comp_expr body in
+            add @@ CBare (CUnOp (incr_op, CIdent var));
+            rvar) in
+          add @@ CWhile (condition, block);
+          (* for loops return unit *)
+          decl_assign ~name:"for_return" (CLInt 0) (CPointer CVoid)
 
       | Lassign _ -> failwith "undefined"
+
+      | Lstaticcatch (body, (id, []), catch) ->
+          let (rvar, rblock) = with_context (fun () -> comp_expr body) in
+          let (cvar, cblock) = with_context (fun () ->
+            add (CLabel (Printf.sprintf "staticcatch_%d" id));
+            comp_expr catch) in
+          let var = fresh_var "catch_return" in
+          let ty = unify_types (get_type rvar) (get_type cvar) in
+          add (CDecl (var, ty));
+          let (_, rblock) = with_context ~init_block:rblock (fun () ->
+            assign (CIdent var, ty) (CIdent rvar, get_type rvar);
+            rvar) in
+          let (_, cblock) = with_context ~init_block:cblock (fun () ->
+            assign (CIdent var, ty) (CIdent cvar, get_type cvar);
+            cvar) in
+
+          add (CIfElse (CLInt 1, rblock, cblock));
+          var
+      | Lstaticraise (id, []) ->
+          add (CGoto (Printf.sprintf "staticcatch_%d" id));
+          (* the function contract requires me to return a variable, so...
+           * I'll just define a null pointer and hope dead code elimination
+           * gets rid of this bit of unreachable code
+           *)
+          decl_assign ~name:"dead_var" (CLInt 0) (CPointer CVoid)
 
       | Levent (lam, ev) ->
           set_loc ev;

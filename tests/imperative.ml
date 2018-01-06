@@ -12,3 +12,9 @@ let () =
   newl ();
   x := [head !x + 1]
 done
+
+let () =
+  for i = 0 to 20 do
+    pint i;
+    newl ()
+done

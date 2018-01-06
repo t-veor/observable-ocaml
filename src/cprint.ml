@@ -78,6 +78,9 @@ and print_cexpr out = function
 
 
 and print_cstatement out = function
+  | CBare e ->
+      print_cexpr out e;
+      fprintf out ";"
   | CDecl (v, CFuncPointer (rt, args)) ->
       print_ctype out rt;
       fprintf out "(*";
@@ -135,6 +138,10 @@ and print_cstatement out = function
           | None -> ()
       end;
       fprintf out "}"
+  | CLabel l ->
+      fprintf out "%s:;" l
+  | CGoto l ->
+      fprintf out "goto %s;" l
 
 
 and print_cblock out block =

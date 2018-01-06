@@ -22,6 +22,7 @@ and cexpr =
   | CSizeOf of ctype
 
 and cstatement =
+  | CBare of cexpr
   | CDecl of cident * ctype
   | CAssign of cexpr * cexpr
   | CReturn of cident
@@ -31,6 +32,8 @@ and cstatement =
   | CLoc of int * string
   | CInclude of string
   | CSwitch of cexpr * (int * cblock) list * cblock option
+  | CLabel of string
+  | CGoto of string
 
 and cblock = cstatement list
 
