@@ -44,7 +44,9 @@ and print_cexpr out = function
       fprintf out").%s" f
   | COffset (e, i) ->
       print_cexpr out e;
-      fprintf out "[%d]" i
+      fprintf out "[";
+      print_cexpr out i;
+      fprintf out "]"
   | CLInt i -> fprintf out "%d" i
   | CLChar c -> fprintf out "%C" c
   | CLString s -> fprintf out "%S" s
@@ -184,6 +186,8 @@ and print_ctype out = function
       comma_sep print_ctype out args;
       fprintf out ")"
       (* raise (NotSupported "Function pointers are not supported") *)
+  | CClosure _ -> fprintf out "closure_t"
+  | CUnknownType -> fprintf out "uint64_t"
 
 
 and print_ccode out = function

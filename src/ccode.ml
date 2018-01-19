@@ -10,7 +10,7 @@ and cexpr =
   | CRef of cexpr
   | CDeref of cexpr
   | CField of cexpr * string
-  | COffset of cexpr * int
+  | COffset of cexpr * cexpr
   | CLInt of int
   | CLChar of char
   | CLString of string
@@ -59,6 +59,8 @@ and ctype =
   | CPointer of ctype
   | CNamedType of Ident.t
   | CFuncPointer of ctype * ctype list
+  | CClosure of ctype * ctype list
+  | CUnknownType
 
 and ccode = {
   preamble : cstatement list;

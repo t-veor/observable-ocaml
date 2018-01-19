@@ -7,13 +7,17 @@ open Ccode
 (* Ignore level for now *)
 let rec comp_type = function
   { desc } -> match desc with
-    | Tvar _ -> failwith "Type variables are not supported"
+    | Tvar _ -> CValue
 
     | Tarrow (_, t1, t2, _) ->
+        (* Compile everything as CClosure temporarily *)
         let t1 = comp_type t1 in begin
         match comp_type t2 with
-          | CFuncPointer (rt, ts) -> CFuncPointer (rt, t1 :: ts)
-          | t2 -> CFuncPointer (t2, [t1])
+          | CFuncPointer (rt, ts)
+          | CClosure (rt, ts) ->
+              CClosure (rt, t1 :: ts)
+          | t2 ->
+              CClosure (t2, [t1])
         end
 
     (* Replace with more robust system later *)
@@ -27,5 +31,7 @@ let rec comp_type = function
     | Tconstr _ -> CValue
 
     | Tlink t -> comp_type t
+
+    | Ttuple _ -> CValue
 
     | _ -> failwith "Unsupported type"
