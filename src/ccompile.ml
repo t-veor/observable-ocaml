@@ -70,15 +70,6 @@ let comp_code lambda (types, externals) =
 
   let name_exp var_name = CIdent (CGlobalVar var_name) in
 
-  (* Block helpers *)
-  let block_field var n =
-    COffset (CCall (name_exp "GET_BLOCK", [CIdent var]), CLInt (n + 1))
-  in
-  let block_tag exp =
-    CCall (name_exp "GET_INT",
-           [CDeref (CCall (name_exp "GET_BLOCK", [exp]))])
-  in
-
   (* closure helpers *)
   (* Get the data from the closure n from the top.
    * (closure_data var 0 refers to the top of the stack)
@@ -99,7 +90,10 @@ let comp_code lambda (types, externals) =
           let cvar = decl_assign exp (CClosure (old_rt, old_args)) in
           CIdent (downcast_closure (old_rt, old_args) (new_rt, new_args) cvar)
       | _ ->
-    if old_ty = CValue then
+    if old_ty = CTypeVar || new_ty = CTypeVar then
+      let temp = decl_assign exp old_ty in
+      CDeref (CCast (CRef (CIdent temp), CPointer new_ty))
+    else if old_ty = CValue then
       begin
         (* unbox CValue and cast to new type *)
         match new_ty with
@@ -142,8 +136,8 @@ let comp_code lambda (types, externals) =
   and unify_types t1 t2 =
     if t1 = t2 then t1
     else if t1 = CValue || t2 = CValue then CValue
-    else if t1 = CPointer CVoid then t2
-    else if t2 = CPointer CVoid then t1
+    else if t1 = CPointer CVoid || t1 = CTypeVar then t2
+    else if t2 = CPointer CVoid || t2 = CTypeVar then t1
     else failwith (Printf.sprintf "cannot unify types %s and %s\n"
       (Cprint.sprint Cprint.print_ctype t1)
       (Cprint.sprint Cprint.print_ctype t2))
@@ -165,6 +159,13 @@ let comp_code lambda (types, externals) =
     stmts := curr_stmts;
     (res, List.rev nstmts)
 
+  (* Block helpers *)
+  and block_field var n =
+    COffset (CCall (name_exp "GET_BLOCK", [CIdent var]), CLInt (n + 1))
+
+  and block_tag exp =
+    cast CTypeVar CInt (CDeref (CCall (name_exp "GET_BLOCK", [exp])))
+
   (* push args onto a closure, making a new closure
    * args should be in the form
    * [new_func_ptr, arg0, arg1, arg2, ...]
@@ -175,7 +176,7 @@ let comp_code lambda (types, externals) =
       (CDeref (CCast (CIdent closure_var, CPointer CInt))) CInt) in
     let new_len = CBinOp ("+", existing_args, CLInt nargs) in
     let new_size = CBinOp ("+", new_len, CLInt 1) in
-    let sizeof = CBinOp ("*", CSizeOf (CPointer CVoid), new_size) in
+    let sizeof = CBinOp ("*", CSizeOf CTypeVar, new_size) in
     let malloc = CCall (name_exp "MALLOC", [sizeof]) in
     let new_closure = decl_assign ~name:"new_closure" malloc new_ty in
     (* Copy existing_args + 1 blocks over *)
@@ -185,7 +186,7 @@ let comp_code lambda (types, externals) =
     (* push the new args on top *)
     List.iteri (fun i x ->
       let offset = CBinOp ("+", existing_args, CLInt (i + 1)) in
-      assign (COffset (CIdent new_closure, offset), CPointer CVoid)
+      assign (COffset (CIdent new_closure, offset), CTypeVar)
              (CIdent x, get_type x)
     ) (List.rev args);
     (* Update the new length *)
@@ -199,7 +200,7 @@ let comp_code lambda (types, externals) =
       (CDeref (CCast (CIdent closure_var, CPointer CInt))) CInt) in
     let new_len = CBinOp ("-", existing_args, CLInt n) in
     let new_size = CBinOp ("+", new_len, CLInt 1) in
-    let sizeof = CBinOp ("*", CSizeOf (CPointer CVoid), new_size) in
+    let sizeof = CBinOp ("*", CSizeOf CTypeVar, new_size) in
     let malloc = CCall (name_exp "MALLOC", [sizeof]) in
     let new_closure = decl_assign ~name:"new_closure" malloc new_ty in
     (* Copy new_size blocks over *)
@@ -207,7 +208,7 @@ let comp_code lambda (types, externals) =
       [CIdent new_closure; CIdent closure_var; new_size]) in
     add @@ CBare copy_call;
     (* Update the new length *)
-    assign (CDeref (CIdent new_closure), CPointer CVoid)
+    assign (CDeref (CIdent new_closure), CTypeVar)
            (new_len, CInt);
     new_closure
 
@@ -219,7 +220,7 @@ let comp_code lambda (types, externals) =
        *)
       | CFuncPointer (rt, arg_tys)
       | CClosure (rt, arg_tys) ->
-          let new_arg_tys = arg_tys @ [CPointer (CPointer CVoid)] in
+          let new_arg_tys = arg_tys @ [CClosure (CTypeVar, [])] in
 
           let args = enumerate (List.length arg_tys + 1)
             (fun _ -> fresh_var "closure_arg") in
@@ -243,20 +244,23 @@ let comp_code lambda (types, externals) =
             loc = unpack_loc !curr_loc;
           } :: !funcs;
 
-          let sizeof = CBinOp ("*", CSizeOf (CPointer CVoid), CLInt 2) in
+          let sizeof = CBinOp ("*", CSizeOf CTypeVar, CLInt 2) in
           let malloc = CCall (name_exp "MALLOC", [sizeof]) in
           let closure = decl_assign ~name:"promoted_closure"
             malloc (CClosure (rt, arg_tys)) in
-          assign (COffset (CIdent closure, CLInt 0), CPointer CVoid) (CLInt 1, CInt);
-          assign (COffset (CIdent closure, CLInt 1), CPointer CVoid) (CRef (CIdent var), get_type var);
+          assign (COffset (CIdent closure, CLInt 0), CTypeVar) (CLInt 1, CInt);
+          assign (COffset (CIdent closure, CLInt 1), CTypeVar) (CRef (CIdent var), get_type var);
           closure
 
       | _ -> failwith "promote called on non-function or closure"
 
 
-  and closure_n n (rt, arg_tys) =
+  (* generate a function which represents a function with n arguments pre-applied
+   *)
+  and closure_n old_arg_tys (rt, arg_tys) =
     (* FIXME: fvar is untyped! This might still be okay as long as we don't
      * try to get the type of fvar! *)
+    let n = List.length old_arg_tys in
     let fvar = fresh_var (Printf.sprintf "closure_%d" n) in
     let closure_obj = fresh_var "closure_obj" in
     let args = enumerate (List.length arg_tys) (fun _ ->
@@ -266,15 +270,17 @@ let comp_code lambda (types, externals) =
        * n + 1 popped off the top
        *)
         let resulting_closure = pop_closure closure_obj (n + 1)
-          (CClosure (CPointer CVoid, [])) in
+          (CClosure (rt, [])) in
 
         (* Construct the call. The first n arguments need to
          * come from the closure object
          *)
         let func_ptr = CCast (
           closure_data resulting_closure 0,
-          CFuncPointer (CPointer CVoid, [])) in
-        let call_args = enumerate n (fun i -> closure_data closure_obj (i + 1))
+          CFuncPointer (rt, [])) in
+        let call_args =
+          List.mapi (fun i t ->
+            cast CTypeVar t (closure_data closure_obj (i + 1))) old_arg_tys
           @ List.map (fun x -> CIdent x) args
           @ [CIdent resulting_closure] in
         let call = CCall (func_ptr, call_args) in
@@ -283,8 +289,8 @@ let comp_code lambda (types, externals) =
         rvar
     ) in
     funcs := {
-      return_type = CClosure (rt, arg_tys) ;
-      args = zip args arg_tys @ [closure_obj, CPointer (CPointer CVoid)];
+      return_type = rt;
+      args = zip args arg_tys @ [closure_obj, CClosure (CTypeVar, [])];
       id = fvar;
       body;
       loc = unpack_loc !curr_loc;
@@ -299,8 +305,38 @@ let comp_code lambda (types, externals) =
     let num_args = List.length new_args in
     let (outer_args, inner_args) = split num_args old_args in
     (* If there are no remaining args, then just return the previous closure *)
-    if outer_args = [] then closure_var
-      (* FIXME: look at types! *)
+    if inner_args = [] then
+      (* construct an intermediate closure to cast arguments to the right types
+       *)
+      let new_ty = CClosure (new_rt, new_args) in
+
+      let fvar = fresh_var "closure_cast" in
+      let closure_obj = fresh_var "closure_obj" in
+      set_type closure_obj (CClosure (old_rt, old_args));
+      let args = enumerate (List.length outer_args) (fun _ ->
+        fresh_var "closure_arg") in
+      let (_, body) = with_context (fun () ->
+        let resulting_args = List.map (fun ((x, t), t') ->
+          decl_assign (cast t t' (CIdent x)) t')
+          (zip (zip args new_args) old_args) in
+        let new_closure = pop_closure closure_obj 1 (CClosure (old_rt, old_args)) in
+        let rvar = apply_closure new_closure resulting_args in
+        let rvar' = cast (get_type rvar) new_rt (CIdent rvar) in
+        let rvar'' = decl_assign rvar' new_rt in
+        add @@ CReturn rvar'';
+        rvar''
+      ) in
+      funcs := {
+        return_type = new_rt;
+        args = zip args new_args @ [closure_obj, get_type closure_obj];
+        id = fvar;
+        body;
+        loc = unpack_loc !curr_loc;
+      } :: !funcs;
+
+      push_closure closure_var
+        [decl_assign (CRef (CIdent fvar)) (CPointer CVoid)] new_ty
+
     else
       (* Construct two functions, one to be the inner function 'b -> 'c
        * the other to be the outer function 'a -> ('b -> 'c)
@@ -309,7 +345,7 @@ let comp_code lambda (types, externals) =
       let closure_ty = CClosure (new_rt, new_args) in
 
       (* Construct inner function *)
-      let inner_func = closure_n num_args (old_rt, inner_args) in
+      let inner_func = closure_n outer_args (old_rt, inner_args) in
 
       (* Construct outer function *)
       let outer_func = fresh_var "outer_closure" in
@@ -338,7 +374,7 @@ let comp_code lambda (types, externals) =
          *)
         let args = CRef (CIdent inner_func) :: curr_args in
         let closure_args = List.map (fun x ->
-          decl_assign ~name:"call_arg" x (CPointer CVoid)) args in
+          decl_assign ~name:"call_arg" x CTypeVar) args in
         let resulting_closure = push_closure resulting_closure closure_args
           return_ty in
 
@@ -355,7 +391,8 @@ let comp_code lambda (types, externals) =
 
       (* push just the outer function onto the closure *)
       push_closure closure_var
-        [outer_closure_obj] (CClosure (new_rt, new_args))
+        [decl_assign (CRef (CIdent outer_func)) (CPointer CVoid)]
+        (CClosure (new_rt, new_args))
 
   (* Applies a closure to given args, assuming args have been casted to the
    * right type.
@@ -368,7 +405,9 @@ let comp_code lambda (types, externals) =
             (* partial application, make a closure! *)
             let n = List.length args in
             let (_, new_arg_tys) = split n arg_tys in
-            let new_func = decl_assign (CRef (CIdent (closure_n n (rt, new_arg_tys)))) (CPointer CVoid) in
+            let new_func = decl_assign (CRef
+                (CIdent (closure_n (List.map get_type args) (rt, new_arg_tys))))
+              CTypeVar in
             (* push args onto closure object *)
             let resulting_closure = push_closure closure_var
               (new_func :: args) (CClosure (rt, new_arg_tys)) in
@@ -639,16 +678,23 @@ let comp_code lambda (types, externals) =
             | Some _ -> Some [CGoto fail_label]
             | None -> None
           in
-          let int_switch = CSwitch
-            (CCall (name_exp "GET_INT", [var]), int_blocks, fail_goto) in
-          let tag_switch = CSwitch
-            (block_tag var, tag_blocks, fail_goto) in
+
+          let (_, int_switch) = with_context (fun () ->
+            add @@ CSwitch
+            (CCall (name_exp "GET_INT", [var]), int_blocks, fail_goto);
+            fresh_var "dummy_var"
+          ) in
+          let (_, tag_switch) = with_context (fun () ->
+            add @@ CSwitch
+            (block_tag var, tag_blocks, fail_goto);
+            fresh_var "dummy_var"
+          ) in
 
           (* Construct the if statement *)
-          let ifstmt = CIfElse (condition, [int_switch],
+          let ifstmt = CIfElse (condition, int_switch,
             match fail_block with
-              | Some b -> [CIfElse (CLInt 1, [tag_switch], b)]
-              | None -> [tag_switch]
+              | Some b -> [CIfElse (CLInt 1, tag_switch, b)]
+              | None -> tag_switch
             ) in
 
           add (CDecl (rvar, rty));
@@ -799,14 +845,14 @@ let comp_code lambda (types, externals) =
       | Pmakeblock (tag, _, _), contents ->
           let vars = List.map comp_expr contents in
           let blocklen = List.length vars in
-          let sizeof = CBinOp ("*", CSizeOf CValue, CLInt (blocklen + 1)) in
+          let sizeof = CBinOp ("*", CSizeOf CTypeVar, CLInt (blocklen + 1)) in
           let malloc_expr = CCall (name_exp "MALLOC", [sizeof]) in
           let block_expr = CCall (name_exp "BOX_BLOCK", [malloc_expr]) in
           let block = decl_assign ~name:"block" block_expr CValue in
-          assign (CDeref (CCall (name_exp "GET_BLOCK", [CIdent block])), CValue)
+          assign (CDeref (CCall (name_exp "GET_BLOCK", [CIdent block])), CTypeVar)
                  (CLInt tag, CInt);
           List.iteri (fun n v ->
-            assign (block_field block n, CValue) (CIdent v, get_type v)) vars;
+            assign (block_field block n, CTypeVar) (CIdent v, get_type v)) vars;
           block
 
       | Pidentity, [x] -> comp_expr x
@@ -840,16 +886,16 @@ let comp_code lambda (types, externals) =
       | Pfloatfield i, [lam] ->
           let e = comp_expr lam in
           let var = fresh_var "field_access" in
-          let ty = CValue in
+          let ty = CTypeVar in
           set_type var ty;
           add (CDecl (var, ty));
-          assign (CIdent var, ty) (block_field e i, CValue);
+          assign (CIdent var, ty) (block_field e i, CTypeVar);
           var
 
       | Psetfield (i, _, _), [trg; lam] ->
           let block = comp_expr trg in
           let var = comp_expr lam in
-          assign (block_field block i, CValue) (CIdent var, get_type var);
+          assign (block_field block i, CTypeVar) (CIdent var, get_type var);
           var
 
       | Psequand, [e1; e2] -> int_bop "&&" e1 e2

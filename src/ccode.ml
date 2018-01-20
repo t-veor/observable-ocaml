@@ -60,7 +60,7 @@ and ctype =
   | CNamedType of Ident.t
   | CFuncPointer of ctype * ctype list
   | CClosure of ctype * ctype list
-  | CUnknownType
+  | CTypeVar
 
 and ccode = {
   preamble : cstatement list;

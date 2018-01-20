@@ -7,9 +7,11 @@
 #define static_assert _Static_assert
 #define MALLOC(v) malloc(v)
 
+typedef void* variable_type;
+
 /* closures are represented as a stack, with the *closure representing the
  * current size of the stack */
-typedef void** closure_t;
+typedef variable_type* closure_t;
 
 typedef void* (*generic_func)();
 
@@ -17,7 +19,7 @@ typedef union _ocaml_t {
     int64_t i;
     double* f;
     char* str;
-    union _ocaml_t* block;
+    variable_type* block;
     closure_t closure;
     generic_func func;
 } ocaml_t;
@@ -58,6 +60,11 @@ void* print_string(char* string) {
 
 void* print_int(int n) {
     printf("%d", n);
+    return 0;
+}
+
+void* print_double(double n) {
+    printf("%f", n);
     return 0;
 }
 
