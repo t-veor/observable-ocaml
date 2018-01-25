@@ -79,7 +79,7 @@ let comp_code lambda (types, externals) =
     (* closure[1] refers to the first actual variable in the closure, so
      * closure[len - n] refers to the nth element from the top *)
     let offset = CBinOp ("-", len, CLInt n) in
-    COffset (CIdent closure_var, offset)
+    COffset (CCast (CIdent closure_var, CPointer CTypeVar), offset)
   in
 
   (* Cast helper to deal with the different cases under which casting can occur *)
@@ -464,12 +464,14 @@ let comp_code lambda (types, externals) =
               | CClosure (rt, arg_tys) ->
                   (* set types for each of the args, just in case *)
                   let args = zip (List.map (fun x -> CVar x) params) arg_tys in
-                  List.fold_left (fun () (arg, ty) -> set_type arg ty) () args;
+                  List.iter (fun (arg, ty) -> set_type arg ty) args;
                   (* Drop into non-toplevel for function body *)
                   let (rvar, fblock) = with_context (fun () ->
                     let rvar = comp_expr body in
-                    add (CReturn rvar);
-                    rvar
+                    let rvar' = decl_assign ~name:"return_value"
+                      (cast (get_type rvar) rt (CIdent rvar)) rt in
+                    add (CReturn rvar');
+                    rvar'
                   ) in
                   let temp_var = fresh_var "func" in
                   set_type temp_var (CFuncPointer (rt, arg_tys));
@@ -492,15 +494,19 @@ let comp_code lambda (types, externals) =
           (* Declare a global constant *)
           let ty = get_type (CVar id) in
           preamble := CDecl (CVar id, ty) :: !preamble;
-          let res = comp_expr arg in
+          let res = comp_expr ~type_hint:(Some ty) arg in
           assign (CIdent (CVar id), ty) (CIdent res, get_type res);
           comp_root rest
 
       | Lletrec (decls, body) ->
+          comp_letrec ~at_root:true decls;
+          comp_root body
+          (*
           (* Dirty hack - does this always work? *)
           let expr = List.fold_right (fun (id, arg) rest ->
             Llet(Strict, Pgenval, id, arg, rest)) decls body in
           comp_root expr
+          *)
 
       | Lsequence (e1, e2) ->
           comp_expr e1 |> ignore;
@@ -525,7 +531,7 @@ let comp_code lambda (types, externals) =
    * Invariant: the type of each variable is always known and present in
    * the types hash table when it is returned from a comp_expr call.
    *)
-  and comp_expr exp =
+  and comp_expr ?(type_hint=None) exp =
     match exp with
       | Lvar id -> CVar id
 
@@ -576,7 +582,79 @@ let comp_code lambda (types, externals) =
                 ((Cprint.sprint Cprint.print_cident fvar) ^ " was not a function pointer")
           end
 
-      | Lfunction _ -> failwith "closures unsupported!"
+      | Lfunction { params; body } ->
+          let (rt, arg_tys) = match type_hint with
+            | Some (CClosure (rt, arg_tys)) ->
+              (* set types for each of the args, just in case *)
+              let args = zip (List.map (fun x -> CVar x) params) arg_tys in
+              List.iter (fun (arg, ty) -> set_type arg ty) args;
+              (rt, arg_tys)
+            | _ ->
+                Printf.printf "Warning: no type hints for function argument, trying to use found types\n";
+                (CTypeVar, List.map (fun id ->
+                  try
+                    IdentHash.find types id
+                  with Not_found ->
+                    CTypeVar
+                  ) params)
+          in
+
+          let args = zip (List.map (fun x -> CVar x) params) arg_tys in
+
+          (* find free variables *)
+          let fvs = List.map (fun x -> CVar x)
+            (IdentSet.elements @@ free_variables exp) in
+          let n_fvs = List.length fvs in
+
+          let closure_arg = fresh_var "closure_obj" in
+          let closure_ty = CClosure (rt, arg_tys) in
+
+          let function_name = fresh_var "local_func" in
+
+          let (_, body) = with_context (fun () ->
+            (* get the free variables from the closure *)
+            List.iteri (fun i fv ->
+              let ty = get_type fv in
+              add @@ CDecl (fv, ty);
+              assign (CIdent fv, ty) (closure_data closure_arg (i+1), CTypeVar)
+            ) fvs;
+
+            let rvar = comp_expr body in
+            let rvar' = decl_assign ~name:"return_value"
+              (cast (get_type rvar) rt (CIdent rvar)) rt in
+            add @@ CReturn rvar';
+            rvar'
+          ) in
+
+          (* add the new function *)
+          funcs := {
+            return_type = rt;
+            args = args @ [closure_arg, closure_ty];
+            id = function_name;
+            body;
+            loc = unpack_loc !curr_loc;
+          } :: !funcs;
+
+          let func_var = decl_assign (CRef (CIdent function_name))
+            (CFuncPointer (rt, arg_tys @ [closure_ty])) in
+
+          (* construct the closure object! *)
+          let len = n_fvs + 1 in
+          let size = len + 1 in
+          let sizeof = CBinOp ("*", CSizeOf CTypeVar, CLInt size) in
+          let malloc = CCall (name_exp "MALLOC", [sizeof]) in
+
+          let resulting_closure = decl_assign ~name:"closure_obj" malloc
+            closure_ty in
+          assign (COffset (CIdent resulting_closure, CLInt 0), CTypeVar)
+                 (CLInt len, CInt);
+          (* add all the free vars to it *)
+          List.iteri (fun i v ->
+            assign (COffset (CIdent resulting_closure, CLInt (i + 1)), CTypeVar)
+                   (CIdent v, get_type v)
+          ) @@ List.rev (func_var :: fvs);
+
+          resulting_closure
 
       (* [ let x = M in N ] =
        *
@@ -597,7 +675,7 @@ let comp_code lambda (types, externals) =
           let (rvar, lblock) = with_context (fun () ->
             add (CDecl (CVar id, arg_ty));
             assign (CIdent (CVar id), arg_ty) (CIdent arg_var, get_type arg_var);
-            let rvar = comp_expr body in
+            let rvar = comp_expr ~type_hint:(Some arg_ty) body in
             assign (CIdent temp, get_type rvar) (CIdent rvar, get_type rvar);
             rvar
           ) in
@@ -608,9 +686,14 @@ let comp_code lambda (types, externals) =
           temp
 
       | Lletrec (decls, body) ->
+          comp_letrec decls;
+          comp_expr body
+          (*
+          (* FIXME: fix letrec behavior *)
           let expr = List.fold_right (fun (id, arg) rest ->
             Llet(Strict, Pgenval, id, arg, rest)) decls body in
           comp_expr expr
+           *)
 
       | Lprim (p, ls, loc) ->
           curr_loc := loc;
@@ -818,6 +901,85 @@ let comp_code lambda (types, externals) =
           comp_expr lam
 
       | _ -> failwith "Unsupported lambda term"
+
+  (* Compiles a series of letrec declarations. *)
+  and comp_letrec ?(at_root=false) decls =
+    (* compilation strategy: for each lambda term,
+     * if it contains no free occurrence of any of the new names, compile it
+     * straight away
+     * otherwise, work out the size of the resulting expression, make the
+     * declaration and malloc, and defer compilation to after all the
+     * declarations for the other variables are known.
+     *)
+    let ids = IdentSet.of_list @@ List.map (fun (x, _) -> x) decls in
+
+    (* special decl to switch on at_root to see if a declaration should be
+     * added to the preamble or not
+     *)
+    let decl var ty =
+      if at_root then
+        preamble := CDecl (var, ty) :: !preamble
+      else
+        add @@ CDecl (var, ty)
+    in
+
+    let to_comp = ref [] in
+
+    let rec phase_one (id, lam) =
+      let var = CVar id in
+      let fvs = free_variables lam in
+      if IdentSet.is_empty @@ IdentSet.inter ids fvs then
+        (* No free occurrence of new names, compile straight away *)
+        let rvar = (if at_root then comp_root else comp_expr ~type_hint:(Some (get_type var))) lam in
+        decl var (get_type var);
+        assign (CIdent var, get_type var)
+               (CIdent rvar, get_type rvar)
+      else begin
+        match lam with
+          | Levent (body, ev) ->
+              set_loc ev;
+              phase_one (id, body)
+          | Lfunction { params; body } ->
+              (* size of closure is number of free variables,
+               * +1 for function closure
+               * +1 for tag telling you its size
+               *)
+              let n_fvs = List.length @@ IdentSet.elements fvs in
+              let size = n_fvs + 2 in
+              let sizeof = CBinOp ("*", CSizeOf CTypeVar, CLInt size) in
+              let malloc = CCall (name_exp "MALLOC", [sizeof]) in
+              let ty = match get_type var with
+                | CFuncPointer (rt, arg_tys)
+                | CClosure (rt, arg_tys) ->
+                    CClosure (rt, arg_tys)
+                | _ -> failwith "Lfunction doesn't have valid type!"
+              in
+              decl var ty;
+              (* no need for casting *)
+              add @@ CAssign (CIdent var, malloc);
+              to_comp := !to_comp @ [var, lam, size]
+          | Lprim (Pmakeblock _, contents, _) ->
+              (* size of block is number of elements in body +1 for the tag *)
+              let size = List.length contents + 1 in
+              let sizeof = CBinOp ("*", CSizeOf CTypeVar, CLInt size) in
+              let malloc = CCall (name_exp "MALLOC", [sizeof]) in
+              decl var (get_type var);
+              add @@ CAssign (CIdent var, malloc);
+              to_comp := !to_comp @ [var, lam, size]
+          | _ -> failwith "Invalid RHS encountered in letrec compilation"
+      end
+    in
+
+    List.iter phase_one decls;
+
+    let rec phase_two (var, lam, size) =
+      let rvar = comp_expr ~type_hint:(Some (get_type var)) lam in
+      let copy_call = CCall (name_exp "MEMCPY", [CIdent var; CIdent rvar; CLInt size]) in
+      add @@ CBare copy_call
+    in
+
+    List.iter phase_two !to_comp
+
 
   (* Compiles a Lprimitive expression. *)
   and comp_prim prim lambdas =

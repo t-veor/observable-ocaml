@@ -22,17 +22,18 @@ typedef union _ocaml_t {
     variable_type* block;
     closure_t closure;
     generic_func func;
+    variable_type whatever;
 } ocaml_t;
 
 static_assert(sizeof(void*) == 8, "pointers must be 8 bytes");
 static_assert(sizeof(double) == 8, "double must be 8 bytes");
 
 #define GET_INT(v) ((int64_t)((v).i >> 1))
-#define GET_FLOAT(v) ((v).f)
-#define GET_STRING(v) ((v).str)
-#define GET_BLOCK(v) ((v).block)
-#define GET_FUNC(v) ((v).func)
-#define GET_CLOSURE(v) ((v).closure)
+#define GET_FLOAT(v) (((ocaml_t)v).f)
+#define GET_STRING(v) (((ocaml_t)v).str)
+#define GET_BLOCK(v) (((ocaml_t)v).block)
+#define GET_FUNC(v) (((ocaml_t)v).func)
+#define GET_CLOSURE(v) (((ocaml_t)v).closure)
 
 #define BOX_INT(v) ((ocaml_t){.i = (int64_t)(v) << 1 | 1})
 static inline ocaml_t BOX_FLOAT(double f) {
@@ -47,11 +48,11 @@ static inline ocaml_t BOX_FLOAT(double f) {
 
 #define IS_INT(v) ((v).i & 1)
 
-static inline void MEMCPY(void* s1, const void* s2, int64_t n) {
-    for (int64_t i = 0; i < n; ++i) {
-        ((uint64_t*)s1)[i] = ((uint64_t*)s2)[i];
-    }
-}
+#define MEMCPY(s1, s2, n) do {\
+    for (int64_t i = 0; i < n; ++i) {\
+        ((uint64_t*)s1)[i] = ((uint64_t*)s2)[i];\
+    }\
+} while(0)
 
 void* print_string(char* string) {
     printf("%s", string);
