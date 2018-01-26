@@ -168,13 +168,13 @@ and print_cfunc out = function
 
 
 and print_ctype out = function
-  | CUInt -> fprintf out "uint64_t"
-  | CInt -> fprintf out "int64_t"
+  | CUInt -> fprintf out "uintptr_t"
+  | CInt -> fprintf out "intptr_t"
   | CFloat -> fprintf out "double"
   | CStr -> fprintf out "char*"
   | CVoid -> fprintf out "void"
-  | CValue -> fprintf out "ocaml_t"
-  | CNamedType i -> fprintf out "%s" (Ident.unique_name i)
+  | CValue -> fprintf out "value_type"
+(*  | CNamedType i -> fprintf out "%s" (Ident.unique_name i) *)
   | CPointer t ->
       print_ctype out t;
       fprintf out "*"
