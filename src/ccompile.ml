@@ -75,11 +75,11 @@ let comp_code lambda (types, externals) =
    * (closure_data var 0 refers to the top of the stack)
    *)
   let closure_data closure_var n =
-    let len = CDeref (CCast (CIdent closure_var, CPointer CInt)) in
+    let len = CCall (name_exp "TO_INT", [CDeref (CIdent closure_var)]) in
     (* closure[1] refers to the first actual variable in the closure, so
      * closure[len - n] refers to the nth element from the top *)
     let offset = CBinOp ("-", len, CLInt n) in
-    COffset (CCast (CIdent closure_var, CPointer CTypeVar), offset)
+    COffset (CIdent closure_var, offset)
   in
 
   (* Cast helper to deal with the different cases under which casting can occur *)
@@ -90,37 +90,41 @@ let comp_code lambda (types, externals) =
           let cvar = decl_assign exp (CClosure (old_rt, old_args)) in
           CIdent (downcast_closure (old_rt, old_args) (new_rt, new_args) cvar)
       | _ ->
-    if old_ty = CTypeVar || new_ty = CTypeVar then
-      let temp = decl_assign exp old_ty in
-      CDeref (CCast (CRef (CIdent temp), CPointer new_ty))
-    else if old_ty = CValue then
+    if old_ty = CTypeVar then
       begin
-        (* unbox CValue and cast to new type *)
         match new_ty with
-          | CUInt
-          | CInt -> CCall (name_exp "GET_INT", [exp])
-          | CFloat -> CCall (name_exp "GET_FLOAT", [exp])
-          | CStr -> CCall (name_exp "GET_STRING", [exp])
-          | CFuncPointer _ -> CCast (CCall (name_exp "GET_FUNC", [exp]), new_ty)
-          | CClosure _ -> CCall (name_exp "GET_CLOSURE", [exp])
-          | _ -> failwith ("bad type to unbox from: " ^
+          | CUInt -> CCall (name_exp "TO_UINT", [exp])
+          | CInt -> CCall (name_exp "TO_INT", [exp])
+          | CFloat -> CCall (name_exp "TO_FLOAT", [exp])
+          | CStr -> CCall (name_exp "TO_STR", [exp])
+          | CClosure _ -> CCall (name_exp "TO_CLOSURE", [exp])
+          | CValue -> CCall (name_exp "TO_VALUE", [exp])
+            (* TODO: remove the func pointer casts after the new closure type
+             * is implemented
+             *)
+          | CFuncPointer _ -> CCast (CCall (name_exp "TO_FUNC", [exp]), new_ty)
+          | _ -> failwith ("bad type to cast from variable_type: " ^
                            Cprint.sprint Cprint.print_ctype new_ty)
       end
-    else if new_ty = CValue then
+    else if new_ty = CTypeVar then
       begin
-        (* box value and cast to new type *)
         match old_ty with
-          | CUInt
-          | CInt -> CCall (name_exp "BOX_INT", [exp])
-          | CFloat -> CCall (name_exp "BOX_FLOAT", [exp])
-          | CStr -> CCall (name_exp "BOX_STRING", [exp])
-          | CFuncPointer _ -> CCall (name_exp "BOX_FUNC", [exp])
-          | CClosure _ -> CCall (name_exp "BOX_CLOSURE", [exp])
+          | CUInt -> CCall (name_exp "FROM_UINT", [exp])
+          | CInt -> CCall (name_exp "FROM_INT", [exp])
+          | CFloat -> CCall (name_exp "FROM_FLOAT", [exp])
+          | CStr -> CCall (name_exp "FROM_STRING", [exp])
+          | CClosure _ -> CCall (name_exp "FROM_CLOSURE", [exp])
+          | CValue -> CCall (name_exp "FROM_VALUE", [exp])
+          | CFuncPointer _ -> CCall (name_exp "FROM_FUNC", [exp])
           | CPointer CVoid -> (* Change null types to just ints? *)
-              CCall (name_exp "BOX_INT", [cast old_ty CInt exp])
-          | _ -> failwith ("bad type to box: " ^
+              CCall (name_exp "FROM_INT", [cast old_ty CInt exp])
+          | _ -> failwith ("bad type to cast to variable_type: " ^
                            Cprint.sprint Cprint.print_ctype old_ty)
       end
+    else if old_ty = CValue && (new_ty = CInt || new_ty = CPointer CVoid) then
+      CCall (name_exp "UNBOX_INT", [exp])
+    else if (old_ty = CInt || old_ty = CPointer CVoid) && new_ty = CValue then
+      CCall (name_exp "BOX_INT", [exp])
     else
       begin
         (* todo: currently just a dirty cast *)
@@ -130,12 +134,16 @@ let comp_code lambda (types, externals) =
         CCast (exp, new_ty)
       end
 
+  and func_to_var_ty func_var =
+    let exp = CRef (CIdent func_var) in
+    let exp = cast (CFuncPointer (CPointer CVoid, [])) CTypeVar exp in
+    decl_assign exp CTypeVar
+
   and assign (target_var, target_ty) (old_exp, old_ty) =
     add @@ CAssign (target_var, cast old_ty target_ty old_exp)
 
   and unify_types t1 t2 =
     if t1 = t2 then t1
-    else if t1 = CValue || t2 = CValue then CValue
     else if t1 = CPointer CVoid || t1 = CTypeVar then t2
     else if t2 = CPointer CVoid || t2 = CTypeVar then t1
     else failwith (Printf.sprintf "cannot unify types %s and %s\n"
@@ -161,10 +169,10 @@ let comp_code lambda (types, externals) =
 
   (* Block helpers *)
   and block_field var n =
-    COffset (CCall (name_exp "GET_BLOCK", [CIdent var]), CLInt (n + 1))
+    COffset (CCall (name_exp "UNBOX_BLOCK", [CIdent var]), CLInt (n + 1))
 
   and block_tag exp =
-    cast CTypeVar CInt (CDeref (CCall (name_exp "GET_BLOCK", [exp])))
+    cast CTypeVar CInt (CDeref (CCall (name_exp "UNBOX_BLOCK", [exp])))
 
   (* push args onto a closure, making a new closure
    * args should be in the form
@@ -276,7 +284,8 @@ let comp_code lambda (types, externals) =
          * come from the closure object
          *)
         let func_ptr = CCast (
-          closure_data resulting_closure 0,
+          cast CTypeVar (CFuncPointer (rt, [])) @@
+            closure_data resulting_closure 0,
           CFuncPointer (rt, [])) in
         let call_args =
           List.mapi (fun i t ->
@@ -335,7 +344,7 @@ let comp_code lambda (types, externals) =
       } :: !funcs;
 
       push_closure closure_var
-        [decl_assign (CRef (CIdent fvar)) (CPointer CVoid)] new_ty
+        [func_to_var_ty fvar] new_ty
 
     else
       (* Construct two functions, one to be the inner function 'b -> 'c
@@ -372,9 +381,9 @@ let comp_code lambda (types, externals) =
         (* Push all the args onto the stack
          * don't forget to cast!
          *)
-        let args = CRef (CIdent inner_func) :: curr_args in
         let closure_args = List.map (fun x ->
-          decl_assign ~name:"call_arg" x CTypeVar) args in
+          decl_assign ~name:"call_arg" x CTypeVar) curr_args in
+        let closure_args = func_to_var_ty inner_func :: closure_args in
         let resulting_closure = push_closure resulting_closure closure_args
           return_ty in
 
@@ -391,7 +400,7 @@ let comp_code lambda (types, externals) =
 
       (* push just the outer function onto the closure *)
       push_closure closure_var
-        [decl_assign (CRef (CIdent outer_func)) (CPointer CVoid)]
+        [func_to_var_ty outer_func]
         (CClosure (new_rt, new_args))
 
   (* Applies a closure to given args, assuming args have been casted to the
@@ -405,9 +414,8 @@ let comp_code lambda (types, externals) =
             (* partial application, make a closure! *)
             let n = List.length args in
             let (_, new_arg_tys) = split n arg_tys in
-            let new_func = decl_assign (CRef
-                (CIdent (closure_n (List.map get_type args) (rt, new_arg_tys))))
-              CTypeVar in
+            let new_func = func_to_var_ty (closure_n (List.map get_type args) (rt, new_arg_tys))
+            in
             (* push args onto closure object *)
             let resulting_closure = push_closure closure_var
               (new_func :: args) (CClosure (rt, new_arg_tys)) in
@@ -415,7 +423,8 @@ let comp_code lambda (types, externals) =
           else
             (* full application *)
             let func_ptr = CCast (
-              closure_data closure_var 0,
+              cast CTypeVar (CFuncPointer (rt, [])) @@
+                closure_data closure_var 0,
               CFuncPointer (rt, [])) in
             let call = CCall (func_ptr, List.map (fun x -> CIdent x) (args @ [closure_var])) in
             let result = decl_assign ~name:"apply_result"
@@ -595,6 +604,7 @@ let comp_code lambda (types, externals) =
                   try
                     IdentHash.find types id
                   with Not_found ->
+                    set_type (CVar id) CTypeVar;
                     CTypeVar
                   ) params)
           in
@@ -764,7 +774,7 @@ let comp_code lambda (types, externals) =
 
           let (_, int_switch) = with_context (fun () ->
             add @@ CSwitch
-            (CCall (name_exp "GET_INT", [var]), int_blocks, fail_goto);
+            (CCall (name_exp "UNBOX_INT", [var]), int_blocks, fail_goto);
             fresh_var "dummy_var"
           ) in
           let (_, tag_switch) = with_context (fun () ->
@@ -799,6 +809,7 @@ let comp_code lambda (types, externals) =
        *)
       | Lifthenelse (i, t, e) ->
           let ivar = comp_expr i in
+          (* HMMMMM *)
           let iexp = cast (get_type ivar) CInt (CIdent ivar) in
           let temp = fresh_var "ifelse_return" in
 
@@ -1011,7 +1022,7 @@ let comp_code lambda (types, externals) =
           let malloc_expr = CCall (name_exp "MALLOC", [sizeof]) in
           let block_expr = CCall (name_exp "BOX_BLOCK", [malloc_expr]) in
           let block = decl_assign ~name:"block" block_expr CValue in
-          assign (CDeref (CCall (name_exp "GET_BLOCK", [CIdent block])), CTypeVar)
+          assign (CDeref (CCall (name_exp "UNBOX_BLOCK", [CIdent block])), CTypeVar)
                  (CLInt tag, CInt);
           List.iteri (fun n v ->
             assign (block_field block n, CTypeVar) (CIdent v, get_type v)) vars;

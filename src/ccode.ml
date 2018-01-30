@@ -57,7 +57,7 @@ and ctype =
   | CValue (* generic ocaml_t type *)
   | CVoid
   | CPointer of ctype
-  | CNamedType of Ident.t
+(*  | CNamedType of Ident.t *)
   | CFuncPointer of ctype * ctype list
   | CClosure of ctype * ctype list
   | CTypeVar

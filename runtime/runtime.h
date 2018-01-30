@@ -7,50 +7,68 @@
 #define static_assert _Static_assert
 #define MALLOC(v) malloc(v)
 
-typedef void* variable_type;
+union _variable_type;
+
+typedef union value_type {
+    intptr_t i;
+    union _variable_type* block;
+} value_type;
+
+typedef void* (*generic_func)(void);
 
 /* closures are represented as a stack, with the *closure representing the
  * current size of the stack */
-typedef variable_type* closure_t;
+typedef union _variable_type* closure_t;
 
-typedef void* (*generic_func)();
-
-typedef union _ocaml_t {
-    int64_t i;
-    double* f;
+typedef union _variable_type {
+    intptr_t i;
+    uintptr_t u;
+    double fl;
     char* str;
-    variable_type* block;
+    value_type value;
     closure_t closure;
-    generic_func func;
-    variable_type whatever;
-} ocaml_t;
+    generic_func f;
+} variable_type;
 
+/* TODO */
+typedef struct _closure_t_new {
+    generic_func f;
+    struct _closure_t_new* next;
+    variable_type args[];
+} closure_t_new;
+
+static_assert(sizeof(intptr_t) == 8, "intptr_t must be 8 bytes");
+static_assert(sizeof(uintptr_t) == 8, "uintptr_t must be 8 bytes");
 static_assert(sizeof(void*) == 8, "pointers must be 8 bytes");
 static_assert(sizeof(double) == 8, "double must be 8 bytes");
+static_assert(sizeof(variable_type) == 8, "variable_type must be 8 bytes");
+static_assert(sizeof(value_type) == 8, "value_type must be 8 bytes");
 
-#define GET_INT(v) ((int64_t)((v).i >> 1))
-#define GET_FLOAT(v) (((ocaml_t)v).f)
-#define GET_STRING(v) (((ocaml_t)v).str)
-#define GET_BLOCK(v) (((ocaml_t)v).block)
-#define GET_FUNC(v) (((ocaml_t)v).func)
-#define GET_CLOSURE(v) (((ocaml_t)v).closure)
+#define TO_INT(v) (((variable_type)v).i)
+#define TO_UINT(v) (((variable_type)v).u)
+#define TO_FLOAT(v) (((variable_type)v).fl)
+#define TO_STR(v) (((variable_type)v).str)
+#define TO_VALUE(v) (((variable_type)v).value)
+#define TO_CLOSURE(v) (((variable_type)v).closure)
+#define TO_FUNC(v) (((variable_type)v).f)
 
-#define BOX_INT(v) ((ocaml_t){.i = (int64_t)(v) << 1 | 1})
-static inline ocaml_t BOX_FLOAT(double f) {
-    double* fp = MALLOC(sizeof(double));
-    *fp = f;
-    return (ocaml_t){.f = fp};
-}
-#define BOX_STRING(v) ((ocaml_t){.str = (v)})
-#define BOX_BLOCK(v) ((ocaml_t){.block = (v)})
-#define BOX_FUNC(v) ((ocaml_t){.func = (generic_func)(v)})
-#define BOX_CLOSURE(v) ((ocaml_t){.closure = (v)})
+#define FROM_INT(v) ((variable_type){.i = (intptr_t)(v)})
+#define FROM_UINT(v) ((variable_type){.u = (uintptr_t)(v)})
+#define FROM_FLOAT(v) ((variable_type){.fl = (double)(v)})
+#define FROM_STR(v) ((variable_type){.str = (char*)(v)})
+#define FROM_VALUE(v) ((variable_type){.value = (value_type)(v)})
+#define FROM_CLOSURE(v) ((variable_type){.closure = (closure_t)(v)})
+#define FROM_FUNC(v) ((variable_type){.f = (generic_func)v})
 
+#define UNBOX_INT(v) ((v).i >> 1)
+#define UNBOX_BLOCK(v) ((v).block)
+#define BOX_INT(v) ((value_type){.i = (intptr_t)(v) << 1 | 1})
+#define BOX_BLOCK(v) ((value_type){.block = (variable_type*)(v)})
 #define IS_INT(v) ((v).i & 1)
 
 #define MEMCPY(s1, s2, n) do {\
-    for (int64_t i = 0; i < n; ++i) {\
-        ((uint64_t*)s1)[i] = ((uint64_t*)s2)[i];\
+    for (intptr_t i = 0; i < n; ++i) {\
+        ((uintptr_t*)s1)[i] = ((uintptr_t*)s2)[i];\
     }\
 } while(0)
 
@@ -59,8 +77,8 @@ void* print_string(char* string) {
     return 0;
 }
 
-void* print_int(int n) {
-    printf("%d", n);
+void* print_int(intptr_t n) {
+    printf("%d", (int)n);
     return 0;
 }
 
