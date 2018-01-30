@@ -1,3 +1,14 @@
+# Ignore all
+*
+
+# Unignore all with extensions
+!*.*
+
+# Unignore all dirs
+!*/
+
+# (ignores all files without extensions)
+
 *.swp
 
 *.annot
