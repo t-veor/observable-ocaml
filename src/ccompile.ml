@@ -112,7 +112,7 @@ let comp_code lambda (types, externals) =
           | CUInt -> CCall (name_exp "FROM_UINT", [exp])
           | CInt -> CCall (name_exp "FROM_INT", [exp])
           | CFloat -> CCall (name_exp "FROM_FLOAT", [exp])
-          | CStr -> CCall (name_exp "FROM_STRING", [exp])
+          | CStr -> CCall (name_exp "FROM_STR", [exp])
           | CClosure _ -> CCall (name_exp "FROM_CLOSURE", [exp])
           | CValue -> CCall (name_exp "FROM_VALUE", [exp])
           | CFuncPointer _ -> CCall (name_exp "FROM_FUNC", [exp])
@@ -128,7 +128,7 @@ let comp_code lambda (types, externals) =
     else
       begin
         (* todo: currently just a dirty cast *)
-        Printf.printf "Warning: dirty cast between %s and %s\n"
+        Printf.eprintf "Warning: dirty cast between %s and %s\n"
           (Cprint.sprint Cprint.print_ctype old_ty)
           (Cprint.sprint Cprint.print_ctype new_ty);
         CCast (exp, new_ty)
@@ -228,7 +228,7 @@ let comp_code lambda (types, externals) =
        *)
       | CFuncPointer (rt, arg_tys)
       | CClosure (rt, arg_tys) ->
-          let new_arg_tys = arg_tys @ [CClosure (CTypeVar, [])] in
+          let new_arg_tys = arg_tys @ [CClosure (CTypeVar, arg_tys)] in
 
           let args = enumerate (List.length arg_tys + 1)
             (fun _ -> fresh_var "closure_arg") in
@@ -284,9 +284,9 @@ let comp_code lambda (types, externals) =
          * come from the closure object
          *)
         let func_ptr = CCast (
-          cast CTypeVar (CFuncPointer (rt, [])) @@
+          cast CTypeVar (CFuncPointer (rt, old_arg_tys @ arg_tys @ [CClosure (rt, [])])) @@
             closure_data resulting_closure 0,
-          CFuncPointer (rt, [])) in
+          CFuncPointer (rt, old_arg_tys @ arg_tys @ [CClosure (rt, [])])) in
         let call_args =
           List.mapi (fun i t ->
             cast CTypeVar t (closure_data closure_obj (i + 1))) old_arg_tys
@@ -423,9 +423,9 @@ let comp_code lambda (types, externals) =
           else
             (* full application *)
             let func_ptr = CCast (
-              cast CTypeVar (CFuncPointer (rt, [])) @@
+              cast CTypeVar (CFuncPointer (rt, arg_tys @ [CClosure (rt, [])])) @@
                 closure_data closure_var 0,
-              CFuncPointer (rt, [])) in
+              CFuncPointer (rt, arg_tys @ [CClosure (rt, [])])) in
             let call = CCall (func_ptr, List.map (fun x -> CIdent x) (args @ [closure_var])) in
             let result = decl_assign ~name:"apply_result"
               call rt in
@@ -447,7 +447,7 @@ let comp_code lambda (types, externals) =
     end
 
     | Const_immstring s -> (CLString s, CStr)
-    | Const_pointer n -> (CLInt n, CPointer CVoid)
+    | Const_pointer n -> (CCall (name_exp "BOX_INT", [CLInt n]), CValue)
 
     | Const_block (tag, args) ->
         (* Just convert it into a regular Pmakeblock *)
@@ -571,7 +571,7 @@ let comp_code lambda (types, externals) =
 
               | CPointer CVoid ->
                   (*
-                  Printf.printf "Warning: void* call\n";
+                  Printf.eprintf "Warning: void* call\n";
                   let exp = CCall
                     (CIdent fvar, List.map (fun x -> CIdent x) args) in
                   decl_assign ~name:"call_result" exp (CPointer CVoid)
@@ -599,7 +599,7 @@ let comp_code lambda (types, externals) =
               List.iter (fun (arg, ty) -> set_type arg ty) args;
               (rt, arg_tys)
             | _ ->
-                Printf.printf "Warning: no type hints for function argument, trying to use found types\n";
+                Printf.eprintf "Warning: no type hints for function argument, trying to use found types\n";
                 (CTypeVar, List.map (fun id ->
                   try
                     IdentHash.find types id

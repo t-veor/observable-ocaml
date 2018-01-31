@@ -36,5 +36,5 @@ setup.log
 .merlin
 
 # test compile outputs
-tests/*.c
-tests/*.o
+tests/**/*.c
+tests/**/*.o

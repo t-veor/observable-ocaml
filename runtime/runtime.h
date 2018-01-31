@@ -72,22 +72,22 @@ static_assert(sizeof(value_type) == 8, "value_type must be 8 bytes");
     }\
 } while(0)
 
-void* print_string(char* string) {
+value_type print_string(char* string) {
     printf("%s", string);
-    return 0;
+    return BOX_INT(0);
 }
 
-void* print_int(intptr_t n) {
+value_type print_int(intptr_t n) {
     printf("%d", (int)n);
-    return 0;
+    return BOX_INT(0);
 }
 
-void* print_double(double n) {
+value_type print_double(double n) {
     printf("%f", n);
-    return 0;
+    return BOX_INT(0);
 }
 
-void* newline(void* x) {
+value_type newline(value_type x) {
     printf("\n");
-    return 0;
+    return BOX_INT(0);
 }

@@ -42,7 +42,7 @@ let get_type t id =
   try
     IdentHash.find t id
   with Not_found ->
-    Printf.printf "Warning: type of %s not found, replacing with void*\n"
+    Printf.eprintf "Warning: type of %s not found, replacing with void*\n"
       (Ident.unique_name id);
     Ccode.CPointer Ccode.CVoid
 

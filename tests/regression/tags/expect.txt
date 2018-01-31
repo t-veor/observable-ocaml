@@ -1,0 +1,31 @@
+test #1
+not D
+not D
+not D
+D
+not D
+not D
+
+test #2
+A, B, or C
+A, B, or C
+A, B, or C
+D, E, or F
+D, E, or F
+D, E, or F
+
+test #3
+A
+B
+C
+D
+E
+F
+
+test #4
+A
+B, E, or F
+C
+D
+B, E, or F
+B, E, or F
