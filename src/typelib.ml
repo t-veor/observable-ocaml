@@ -24,7 +24,7 @@ let rec comp_type = function
 
     | Tconstr (Path.Pident { Ident.name = "int" }, [], _) -> CInt
     | Tconstr (Path.Pident { Ident.name = "float" }, [], _) -> CFloat
-    | Tconstr (Path.Pident { Ident.name = "bool" }, [], _) -> CInt
+    | Tconstr (Path.Pident { Ident.name = "bool" }, [], _) -> CValue
     | Tconstr (Path.Pident { Ident.name = "string" }, [], _) -> CStr
     | Tconstr (Path.Pident { Ident.name = "unit" }, [], _) -> CValue
 

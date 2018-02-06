@@ -153,8 +153,13 @@ and print_cblock out block =
 
 
 and print_cfunc out = function
-  | { return_type; args; id; body; loc = (lnum, fname) } ->
-      print_cstatement out (CLoc (lnum, fname));
+  | { return_type; args; id; body; loc } ->
+      begin
+        match loc with
+          | Some (lnum, fname) ->
+              print_cstatement out (CLoc (lnum, fname))
+          | None -> fprintf out "\n"
+      end;
       print_ctype out return_type;
       fprintf out " ";
       print_cident out id;

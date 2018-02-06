@@ -8,7 +8,7 @@ let is_zero = function
   | _ -> false
 
 let _ =
-  if is_zero 2 then
+  if is_zero 2 && is_zero 2 then
     print_string "2 is zero\n"
   else
     print_string "2 is not zero\n"

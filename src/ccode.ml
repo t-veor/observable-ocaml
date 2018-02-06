@@ -42,7 +42,7 @@ and cfunc = {
   args : (cident * ctype) list;
   id : cident;
   body : cblock;
-  loc : int * string;
+  loc : (int * string) option;
 }
 
 and cunop = string

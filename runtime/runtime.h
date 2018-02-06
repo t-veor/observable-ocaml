@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdarg.h>
+#include <math.h>
 
 #define static_assert _Static_assert
 #define MALLOC(v) malloc(v)
@@ -28,6 +29,7 @@ typedef union _variable_type {
     value_type value;
     closure_t closure;
     generic_func f;
+    void* pointer;
 } variable_type;
 
 /* TODO */
@@ -89,5 +91,10 @@ value_type print_double(double n) {
 
 value_type newline(value_type x) {
     printf("\n");
+    return BOX_INT(0);
+}
+
+value_type print_byte(int x) {
+    putchar(x);
     return BOX_INT(0);
 }
