@@ -41,7 +41,11 @@ and print_cexpr out = function
   | CField (e, f) ->
       fprintf out "(";
       print_cexpr out e;
-      fprintf out").%s" f
+      fprintf out ").%s" f
+  | CArrow (e, f) ->
+      fprintf out "(";
+      print_cexpr out e;
+      fprintf out ")->%s" f
   | COffset (e, i) ->
       print_cexpr out e;
       fprintf out "[";
@@ -191,7 +195,7 @@ and print_ctype out = function
       comma_sep print_ctype out args;
       fprintf out ")"
       (* raise (NotSupported "Function pointers are not supported") *)
-  | CClosure _ -> fprintf out "closure_t"
+  | CClosure _ -> fprintf out "closure_type*"
   | CTypeVar -> fprintf out "variable_type"
 
 

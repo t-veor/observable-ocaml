@@ -15,11 +15,9 @@ typedef union value_type {
     union _variable_type* block;
 } value_type;
 
-typedef void* (*generic_func)(void);
+typedef void* (*generic_func)();
 
-/* closures are represented as a stack, with the *closure representing the
- * current size of the stack */
-typedef union _variable_type* closure_t;
+struct _closure_type;
 
 typedef union _variable_type {
     intptr_t i;
@@ -27,17 +25,17 @@ typedef union _variable_type {
     double fl;
     char* str;
     value_type value;
-    closure_t closure;
+    struct _closure_type* closure;
     generic_func f;
     void* pointer;
 } variable_type;
 
-/* TODO */
-typedef struct _closure_t_new {
+typedef struct _closure_type {
     generic_func f;
-    struct _closure_t_new* next;
+    struct _closure_type* next;
     variable_type args[];
-} closure_t_new;
+} closure_type;
+
 
 static_assert(sizeof(intptr_t) == 8, "intptr_t must be 8 bytes");
 static_assert(sizeof(uintptr_t) == 8, "uintptr_t must be 8 bytes");
@@ -45,6 +43,7 @@ static_assert(sizeof(void*) == 8, "pointers must be 8 bytes");
 static_assert(sizeof(double) == 8, "double must be 8 bytes");
 static_assert(sizeof(variable_type) == 8, "variable_type must be 8 bytes");
 static_assert(sizeof(value_type) == 8, "value_type must be 8 bytes");
+static_assert(sizeof(closure_type) % sizeof(variable_type) == 0, "closure_type must be a multiple of variable_type");
 
 #define TO_INT(v) (((variable_type)v).i)
 #define TO_UINT(v) (((variable_type)v).u)
@@ -59,7 +58,7 @@ static_assert(sizeof(value_type) == 8, "value_type must be 8 bytes");
 #define FROM_FLOAT(v) ((variable_type){.fl = (double)(v)})
 #define FROM_STR(v) ((variable_type){.str = (char*)(v)})
 #define FROM_VALUE(v) ((variable_type){.value = (value_type)(v)})
-#define FROM_CLOSURE(v) ((variable_type){.closure = (closure_t)(v)})
+#define FROM_CLOSURE(v) ((variable_type){.closure = (closure_type*)(v)})
 #define FROM_FUNC(v) ((variable_type){.f = (generic_func)v})
 
 #define UNBOX_INT(v) ((v).i >> 1)

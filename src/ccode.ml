@@ -10,6 +10,7 @@ and cexpr =
   | CRef of cexpr
   | CDeref of cexpr
   | CField of cexpr * string
+  | CArrow of cexpr * string
   | COffset of cexpr * cexpr
   | CLInt of int
   | CLChar of char
