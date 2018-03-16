@@ -425,7 +425,7 @@ let comp_code lambda (types, externals) =
             let resulting_closure = push_closure closure_var new_func args
               (CClosure (rt, new_arg_tys)) in
             resulting_closure
-          else
+          else 
             (* full application *)
             let func_ptr = CCast (CArrow (CIdent closure_var, "f"),
               CFuncPointer (rt, arg_tys @ [CClosure (rt, [])])) in
@@ -433,6 +433,7 @@ let comp_code lambda (types, externals) =
             let result = decl_assign ~name:"apply_result"
               call rt in
             result
+
 
       | _ -> failwith "apply_closure called on non-closure"
 
@@ -474,17 +475,42 @@ let comp_code lambda (types, externals) =
           begin
             match get_type (CVar id) with
               | CClosure (rt, arg_tys) ->
+                  (* TODO: dedup this and comp_expr? *)
                   let loc = unpack_loc !curr_loc in
+                  let params = List.map (fun x -> CVar x) params in
+
+                  (* check if the function requires eta expansion
+                   * this occurs when the type of the function takes more
+                   * arguments than actual parameters
+                   *)
+                  let _, expand_tys = split (List.length params) arg_tys in
+                  (* generate new params *)
+                  let new_params = enumerate (List.length expand_tys) (fun _ ->
+                    fresh_var "eta_expand_var") in
+                  let params = params @ new_params in
+
+                  let args = zip params arg_tys in
+
                   (* set types for each of the args, just in case *)
-                  let args = zip (List.map (fun x -> CVar x) params) arg_tys in
                   List.iter (fun (arg, ty) -> set_type arg ty) args;
                   (* Drop into non-toplevel for function body *)
                   let (rvar, fblock) = with_context (fun () ->
                     let rvar = comp_expr body in
-                    let rvar' = decl_assign ~name:"return_value"
-                      (cast (get_type rvar) rt (CIdent rvar)) rt in
-                    add (CReturn rvar');
-                    rvar'
+
+                    (* if eta expansion happened, make sure to actually apply the
+                     * remaining args
+                     *)
+                    let rvar' = if new_params <> [] then
+                      apply_closure rvar new_params
+                    else
+                      rvar
+                    in
+
+                    let rvar'' = decl_assign ~name:"return_value"
+                      (cast (get_type rvar') rt (CIdent rvar')) rt in
+
+                    add (CReturn rvar'');
+                    rvar''
                   ) in
                   let temp_var = fresh_var "func" in
                   set_type temp_var (CFuncPointer (rt, arg_tys));
@@ -613,7 +639,19 @@ let comp_code lambda (types, externals) =
                   ) params)
           in
 
-          let args = zip (List.map (fun x -> CVar x) params) arg_tys in
+          let params = List.map (fun x -> CVar x) params in
+
+          (* check if the function requires eta expansion
+           * this occurs when the type of the function takes more
+           * arguments than actual parameters
+           *)
+          let _, expand_tys = split (List.length params) arg_tys in
+          (* generate new params *)
+          let new_params = enumerate (List.length expand_tys) (fun _ ->
+            fresh_var "eta_expand_var") in
+          let params = params @ new_params in
+
+          let args = zip params arg_tys in
 
           (* find free variables *)
           let fvs = List.map (fun x -> CVar x)
@@ -635,10 +673,20 @@ let comp_code lambda (types, externals) =
             ) fvs;
 
             let rvar = comp_expr body in
-            let rvar' = decl_assign ~name:"return_value"
-              (cast (get_type rvar) rt (CIdent rvar)) rt in
-            add @@ CReturn rvar';
-            rvar'
+            (* if eta expansion happened, make sure to actually apply the
+             * remaining args
+             *)
+            let rvar' = if new_params <> [] then
+              apply_closure rvar new_params
+            else
+              rvar
+            in
+
+            let rvar'' = decl_assign ~name:"return_value"
+              (cast (get_type rvar') rt (CIdent rvar')) rt in
+
+            add (CReturn rvar'');
+            rvar''
           ) in
 
           (* add the new function *)
