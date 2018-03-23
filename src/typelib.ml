@@ -7,7 +7,7 @@ open Ccode
 (* Ignore level for now *)
 let rec comp_type = function
   { desc } -> match desc with
-    | Tvar _ -> CTypeVar
+    | Tvar _ -> CValue
 
     | Tarrow (_, t1, t2, _) ->
         (* Compile everything as CClosure temporarily *)

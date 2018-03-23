@@ -196,7 +196,9 @@ and print_ctype out = function
       fprintf out ")"
       (* raise (NotSupported "Function pointers are not supported") *)
   | CClosure _ -> fprintf out "closure_type*"
-  | CTypeVar -> fprintf out "variable_type"
+  | CClosureT -> fprintf out "closure_type"
+  | CAnyType -> fprintf out "any_type"
+  | CBlockT -> fprintf out "block"
 
 
 and print_ccode out = function
