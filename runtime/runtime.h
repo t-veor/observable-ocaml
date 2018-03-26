@@ -12,10 +12,14 @@
 
 struct _block;
 
+#ifdef DEBUG
+
 typedef union _value_type {
     intptr_t i;
     struct _block* block;
 } value_type;
+
+#endif
 
 typedef void* (*generic_func)();
 
@@ -26,11 +30,19 @@ typedef union _any_type {
     uintptr_t u;
     double fl;
     char* str;
+#ifdef DEBUG
     value_type value;
+#else
+    struct _block* block;
+#endif
     struct _closure_type* closure;
     generic_func f;
     void* pointer;
 } any_type;
+
+#ifndef DEBUG
+typedef any_type value_type;
+#endif
 
 typedef struct _block{
     uintptr_t size : 56;
@@ -67,7 +79,11 @@ static_assert(sizeof(closure_type) % sizeof(any_type) == 0, "closure_type must b
 #define TO_UINT(v) (((any_type)v).u)
 #define TO_FLOAT(v) (((any_type)v).fl)
 #define TO_STR(v) (((any_type)v).str)
+#ifdef DEBUG
 #define TO_VALUE(v) (((any_type)v).value)
+#else
+#define TO_VALUE(v) (v)
+#endif
 #define TO_CLOSURE(v) (((any_type)v).closure)
 #define TO_FUNC(v) (((any_type)v).f)
 
@@ -75,7 +91,11 @@ static_assert(sizeof(closure_type) % sizeof(any_type) == 0, "closure_type must b
 #define FROM_UINT(v) ((any_type){.u = (uintptr_t)(v)})
 #define FROM_FLOAT(v) ((any_type){.fl = (double)(v)})
 #define FROM_STR(v) ((any_type){.str = (char*)(v)})
+#ifdef DEBUG
 #define FROM_VALUE(v) ((any_type){.value = (value_type)(v)})
+#else
+#define FROM_VALUE(v) (v)
+#endif
 #define FROM_CLOSURE(v) ((any_type){.closure = (closure_type*)(v)})
 #define FROM_FUNC(v) ((any_type){.f = (generic_func)v})
 
@@ -83,9 +103,21 @@ static_assert(sizeof(closure_type) % sizeof(any_type) == 0, "closure_type must b
 
 #define UNBOX_INT(v) ((v).i >> 1)
 #define UNBOX_UINT(v) ((v).i >> 1)
+
+#ifdef DEBUG
+
 #define UNBOX_FLOAT(v) ((v).block->data[0].fl)
 #define UNBOX_STR(v) ((v).block->data[0].str)
 #define UNBOX_CLOSURE(v) ((v).block->data[0].closure)
+
+#else
+
+#define UNBOX_FLOAT(v) TO_FLOAT(v)
+#define UNBOX_STR(v) TO_STR(v)
+#define UNBOX_CLOSURE(v) TO_CLOSURE(v)
+
+#endif
+
 #define UNBOX_BLOCK(v) ((v).block)
 
 #define BOX_BLOCK(v) ((value_type){.block = (block*)(v)})
@@ -99,9 +131,20 @@ static inline value_type BOX_GEN(any_type val, unsigned int tag) {
 
 #define BOX_INT(v) ((value_type){.i = (intptr_t)(v) << 1 | 1})
 #define BOX_UINT(v) ((value_type){.i = (uintptr_t)(v) << 1 | 1})
+
+#ifdef DEBUG
+
 #define BOX_FLOAT(v) BOX_GEN(FROM_FLOAT(v), DOUBLE_TAG)
 #define BOX_STR(v) BOX_GEN(FROM_STR(v), STRING_TAG)
 #define BOX_CLOSURE(v) BOX_GEN(FROM_CLOSURE(v), CLOSURE_TAG)
+
+#else
+
+#define BOX_FLOAT(v) FROM_FLOAT(v)
+#define BOX_STR(v) FROM_STR(v)
+#define BOX_CLOSURE(v) FROM_CLOSURE(v)
+
+#endif
 
 /* UTILITY FUNCTIONS */
 
