@@ -1,7 +1,7 @@
 (* Imperative test.
  * Tests that the imperative features of OCaml are translated
  * correctly into C code.
- *) 
+ *)
 
 external print_string : string -> unit = "print_string"
 external print_int : int -> unit = "print_int"
