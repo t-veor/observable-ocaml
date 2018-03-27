@@ -42,9 +42,9 @@ let get_type t id =
   try
     IdentHash.find t id
   with Not_found ->
-    Printf.eprintf "Warning: type of %s not found, replacing with variable_type\n"
+    Printf.eprintf "Warning: type of %s not found, replacing with any_type\n"
       (Ident.unique_name id);
-    Ccode.CTypeVar
+    Ccode.CAnyType
 
 let set_extern_id e prim_name t1 =
   try

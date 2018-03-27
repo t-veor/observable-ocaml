@@ -61,7 +61,9 @@ and ctype =
 (*  | CNamedType of Ident.t *)
   | CFuncPointer of ctype * ctype list
   | CClosure of ctype * ctype list
-  | CTypeVar
+  | CClosureT
+  | CAnyType
+  | CBlockT
 
 and ccode = {
   preamble : cstatement list;

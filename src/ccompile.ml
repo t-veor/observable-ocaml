@@ -13,7 +13,6 @@ let fresh_var name = CVar (Ident.create name)
 (* Haskell-like list processing functions that are somehow missing from the
  * standard library
  *)
-
 let rec zip xs ys = match (xs, ys) with
   | x::xs, y::ys -> (x, y) :: zip xs ys
   | [], _ | _, [] -> []
@@ -59,7 +58,7 @@ let comp_code lambda (types, externals) =
   in
   let get_type = function
     | CVar i -> get_type types i
-    | CGlobalVar s -> CPointer CVoid
+    | CGlobalVar s -> CValue
   in
 
   (* Helper function for adding statements *)
@@ -84,14 +83,14 @@ let comp_code lambda (types, externals) =
   in
 
   let closure_malloc n =
-    let size = CBinOp ("+", CSizeOf (CClosure (CTypeVar, [])),
-      CBinOp ("*", CSizeOf CTypeVar, CLInt n)) in
+    let size = CBinOp ("+", CSizeOf CClosureT,
+      CBinOp ("*", CSizeOf CAnyType, CLInt n)) in
     CCall (name_exp "MALLOC", [size])
   in
 
   let pack ty exp =
     match ty with
-      | CTypeVar -> exp
+      | CAnyType -> exp
       | CUInt -> CCall (name_exp "FROM_UINT", [exp])
       | CInt -> CCall (name_exp "FROM_INT", [exp])
       | CFloat -> CCall (name_exp "FROM_FLOAT", [exp])
@@ -105,7 +104,7 @@ let comp_code lambda (types, externals) =
 
   let unpack ty exp =
     match ty with
-      | CTypeVar -> exp
+      | CAnyType -> exp
       | CUInt -> CCall (name_exp "TO_UINT", [exp])
       | CInt -> CCall (name_exp "TO_INT", [exp])
       | CFloat -> CCall (name_exp "TO_FLOAT", [exp])
@@ -114,6 +113,30 @@ let comp_code lambda (types, externals) =
       | CValue -> CCall (name_exp "TO_VALUE", [exp])
       | CFuncPointer _ -> CCall (name_exp "TO_FUNC", [exp])
       | _ -> failwith ("bad type to unpack to: " ^
+                       Cprint.sprint Cprint.print_ctype ty)
+  in
+
+  let box ty exp =
+    match ty with
+      | CValue -> exp
+      | CUInt -> CCall (name_exp "BOX_UINT", [exp])
+      | CInt -> CCall (name_exp "BOX_INT", [exp])
+      | CFloat -> CCall (name_exp "BOX_FLOAT", [exp])
+      | CStr -> CCall (name_exp "BOX_STR", [exp])
+      | CClosure _ -> CCall (name_exp "BOX_CLOSURE", [exp])
+      | _ -> failwith ("bad type to box: " ^
+                       Cprint.sprint Cprint.print_ctype ty)
+  in
+
+  let unbox ty exp =
+    match ty with
+      | CValue -> exp
+      | CUInt -> CCall (name_exp "UNBOX_UINT", [exp])
+      | CInt -> CCall (name_exp "UNBOX_INT", [exp])
+      | CFloat -> CCall (name_exp "UNBOX_FLOAT", [exp])
+      | CStr -> CCall (name_exp "UNBOX_STR", [exp])
+      | CClosure _ -> CCall (name_exp "UNBOX_CLOSURE", [exp])
+      | _ -> failwith ("bad type to unbox: " ^
                        Cprint.sprint Cprint.print_ctype ty)
   in
 
@@ -128,32 +151,50 @@ let comp_code lambda (types, externals) =
             exp (CClosure (old_rt, old_args)) in
           CIdent (downcast_closure (old_rt, old_args) (new_rt, new_args) cvar)
       | _ ->
-    if old_ty = CTypeVar then
+    if old_ty = CAnyType then
       begin
         match new_ty with
           | CClosure (_, args) ->
               cast
-                (CClosure (CTypeVar, repeat CTypeVar (List.length args)))
+                (CClosure (CValue, repeat CValue (List.length args)))
                 new_ty
                 (unpack new_ty exp)
           | _ -> unpack new_ty exp
       end
-    else if new_ty = CTypeVar then
+    else if new_ty = CAnyType then
       begin
         match old_ty with
           | CClosure (_, args) ->
               let exp = cast
                 old_ty
-                (CClosure (CTypeVar, repeat CTypeVar (List.length args)))
+                (CClosure (CValue, repeat CValue (List.length args)))
                 exp
               in
               pack old_ty exp
           | _ -> pack old_ty exp
       end
-    else if old_ty = CValue && (new_ty = CInt || new_ty = CPointer CVoid) then
-      CCall (name_exp "UNBOX_INT", [exp])
-    else if (old_ty = CInt || old_ty = CPointer CVoid) && new_ty = CValue then
-      CCall (name_exp "BOX_INT", [exp])
+    else if old_ty = CValue then
+      begin
+        match new_ty with
+          | CClosure (_, args) ->
+              cast
+                (CClosure (CValue, repeat CValue (List.length args)))
+                new_ty
+                (unbox new_ty exp)
+          | _ -> unbox new_ty exp
+      end
+    else if new_ty = CValue then
+      begin
+        match old_ty with
+          | CClosure (_, args) ->
+              let exp = cast
+                old_ty
+                (CClosure (CValue, repeat CValue (List.length args)))
+                exp
+              in
+              box old_ty exp
+          | _ -> box old_ty exp
+      end
     else
       begin
         (* todo: currently just a dirty cast *)
@@ -180,10 +221,10 @@ let comp_code lambda (types, externals) =
 
   and unify_types t1 t2 =
     if t1 = t2 then t1
-    else if t1 = CPointer CVoid || t1 = CTypeVar then t2
-    else if t2 = CPointer CVoid || t2 = CTypeVar then t1
-    else if t1 = CInt && t2 = CValue then CValue
-    else if t1 = CValue && t2 = CInt then CValue
+    else if t1 = CAnyType then t2
+    else if t2 = CAnyType then t1
+    else if t1 = CValue then CValue
+    else if t2 = CValue then CValue
     else failwith (Printf.sprintf "cannot unify types %s and %s\n"
       (Cprint.sprint Cprint.print_ctype t1)
       (Cprint.sprint Cprint.print_ctype t2))
@@ -207,10 +248,13 @@ let comp_code lambda (types, externals) =
 
   (* Block helpers *)
   and block_field var n =
-    COffset (CCall (name_exp "UNBOX_BLOCK", [cast (get_type var) CValue (CIdent var)]), CLInt (n + 1))
+    COffset (CArrow (CCall (name_exp "UNBOX_BLOCK", [cast (get_type var) CValue (CIdent var)]), "data"), CLInt n)
 
   and block_tag exp =
-    cast CTypeVar CInt (CDeref (CCall (name_exp "UNBOX_BLOCK", [exp])))
+    CArrow (CCall (name_exp "UNBOX_BLOCK", [exp]), "tag")
+
+  and block_size exp =
+    CArrow (CCall (name_exp "UNBOX_BLOCK", [exp]), "size")
 
   (* push args onto a closure, making a new closure
    *)
@@ -238,7 +282,7 @@ let comp_code lambda (types, externals) =
        *)
       | CFuncPointer (rt, arg_tys)
       | CClosure (rt, arg_tys) ->
-          let new_arg_tys = arg_tys @ [CClosure (CTypeVar, arg_tys)] in
+          let new_arg_tys = arg_tys @ [CClosure (CValue, arg_tys)] in
 
           let args = enumerate (List.length arg_tys + 1)
             (fun _ -> fresh_var "closure_arg") in
@@ -309,7 +353,7 @@ let comp_code lambda (types, externals) =
     ) in
     funcs := {
       return_type = rt;
-      args = zip args arg_tys @ [closure_obj, CClosure (CTypeVar, [])];
+      args = zip args arg_tys @ [closure_obj, CClosure (CValue, [])];
       id = fvar;
       body;
       loc = None;
@@ -386,18 +430,21 @@ let comp_code lambda (types, externals) =
         let curr_args = zip curr_args outer_args in
         let closure_args = List.map (fun ((v, old_ty), new_ty) ->
           let exp = cast old_ty new_ty (CIdent v) in
-          decl_assign ~name:"call_arg" (pack new_ty exp) CTypeVar
+          decl_assign ~name:"call_arg" (pack new_ty exp) CAnyType
         ) curr_args in
         (* Push all the args onto the stack
          *)
         let resulting_closure = push_closure resulting_closure
           (func_to_var inner_func) closure_args return_ty in
 
-        add @@ CReturn resulting_closure;
-        resulting_closure
+        let rvar = decl_assign ~name:"return_cast"
+          (cast return_ty new_rt (CIdent resulting_closure)) new_rt in
+
+        add @@ CReturn rvar;
+        rvar
       ) in
       funcs := {
-        return_type = return_ty;
+        return_type = new_rt;
         args = outer_func_arg_with_tys;
         id = outer_func;
         body = outer_body;
@@ -425,7 +472,7 @@ let comp_code lambda (types, externals) =
             let resulting_closure = push_closure closure_var new_func args
               (CClosure (rt, new_arg_tys)) in
             resulting_closure
-          else 
+          else
             (* full application *)
             let func_ptr = CCast (CArrow (CIdent closure_var, "f"),
               CFuncPointer (rt, arg_tys @ [CClosure (rt, [])])) in
@@ -630,12 +677,12 @@ let comp_code lambda (types, externals) =
               (rt, arg_tys)
             | _ ->
                 Printf.eprintf "Warning: no type hints for function argument, trying to use found types\n";
-                (CTypeVar, List.map (fun id ->
+                (CValue, List.map (fun id ->
                   try
                     IdentHash.find types id
                   with Not_found ->
-                    set_type (CVar id) CTypeVar;
-                    CTypeVar
+                    set_type (CVar id) CValue;
+                    CValue
                   ) params)
           in
 
@@ -788,7 +835,7 @@ let comp_code lambda (types, externals) =
 
           (* Determine type! *)
           (* No composition operator in OCaml why *)
-          let rty = List.fold_left unify_types (CPointer CVoid)
+          let rty = List.fold_left unify_types CAnyType
             (List.map (fun (_, (v, _)) -> get_type v) int_blocks) in
           let rty = List.fold_left unify_types rty
             (List.map (fun (_, (v, _)) -> get_type v) tag_blocks) in
@@ -915,18 +962,23 @@ let comp_code lambda (types, externals) =
           let svar = comp_expr s in
           let evar = comp_expr e in
 
-          let var = CVar id in
-          set_type var CInt;
-          add (CDecl (var, CInt));
-          assign (CIdent var, CInt) (CIdent svar, get_type svar);
-          let condition = CBinOp (comp_op,
-            CIdent var, cast (get_type evar) CInt (CIdent evar)) in
-
           let (_, block) = with_context (fun () ->
-            let rvar = comp_expr body in
-            add @@ CBare (CUnOp (incr_op, CIdent var));
-            rvar) in
-          add @@ CWhile (condition, block);
+            let var = CVar id in
+            set_type var CInt;
+            add (CDecl (var, CInt));
+            assign (CIdent var, CInt) (CIdent svar, get_type svar);
+            let condition = CBinOp (comp_op,
+              CIdent var, cast (get_type evar) CInt (CIdent evar)) in
+
+            let (_, block) = with_context (fun () ->
+              let rvar = comp_expr body in
+              add @@ CBare (CUnOp (incr_op, CIdent var));
+              rvar) in
+            add @@ CWhile (condition, block);
+
+            make_unit ()
+          ) in
+          add @@ CBlock block;
           (* for loops return unit *)
           make_unit ()
 
@@ -956,7 +1008,7 @@ let comp_code lambda (types, externals) =
            * I'll just define a null pointer and hope dead code elimination
            * gets rid of this bit of unreachable code
            *)
-          decl_assign ~name:"dead_var" (CLInt 0) (CPointer CVoid)
+          decl_assign ~name:"dead_var" (cast CInt CValue (CLInt 1)) CValue
 
       | Levent (lam, ev) ->
           set_loc ev;
@@ -1016,8 +1068,9 @@ let comp_code lambda (types, externals) =
               to_comp := !to_comp @ [var, get_type var, lam]
           | Lprim (Pmakeblock _, contents, _) ->
               (* size of block is number of elements in body +1 for the tag *)
-              let size = List.length contents + 1 in
-              let sizeof = CBinOp ("*", CSizeOf CTypeVar, CLInt size) in
+              let size = List.length contents in
+              let sizeof = CBinOp ("+", CSizeOf CBlockT,
+                CBinOp ("*", CSizeOf CAnyType, CLInt size)) in
               let malloc = CCall (name_exp "MALLOC", [sizeof]) in
               let block = CCall (name_exp "BOX_BLOCK", [malloc]) in
               decl var (get_type var);
@@ -1067,16 +1120,20 @@ let comp_code lambda (types, externals) =
       | Pmakeblock (tag, _, _), contents ->
           let vars = List.map comp_expr contents in
           let blocklen = List.length vars in
-          let sizeof = CBinOp ("*", CSizeOf CTypeVar, CLInt (blocklen + 1)) in
+          let sizeof = CBinOp ("+", CSizeOf CBlockT,
+            CBinOp ("*", CSizeOf CAnyType, CLInt blocklen)) in
           let malloc_expr = CCall (name_exp "MALLOC", [sizeof]) in
           let block_expr = CCall (name_exp "BOX_BLOCK", [malloc_expr]) in
           let block = match use_name with
             | Some var -> var
             | None -> decl_assign ~name:"block" block_expr CValue in
-          assign (CDeref (CCall (name_exp "UNBOX_BLOCK", [CIdent block])), CTypeVar)
-                 (CLInt tag, CInt);
+          assign (block_tag (CIdent block), CInt) (CLInt tag, CInt);
+          assign (block_size (CIdent block), CInt) (CLInt blocklen, CInt);
           List.iteri (fun n v ->
-            assign (block_field block n, CTypeVar) (CIdent v, get_type v)) vars;
+            assign (block_field block n, CAnyType)
+                   (* when assigning to a block, go through CValue first *)
+                   (cast (get_type v) CValue (CIdent v), CValue)
+          ) vars;
           block
 
       | Pidentity, [x] -> comp_expr x
@@ -1103,19 +1160,22 @@ let comp_code lambda (types, externals) =
 
       | Pfield i, [lam]
       | Pfloatfield i, [lam] ->
+          (* reading from a block should be a CValue *)
           let e = comp_expr lam in
           let var = fresh_var "field_access" in
-          let ty = CTypeVar in
+          let ty = CValue in
           set_type var ty;
           add (CDecl (var, ty));
-          assign (CIdent var, ty) (block_field e i, CTypeVar);
+          assign (CIdent var, ty) (block_field e i, CAnyType);
           var
 
       | Psetfield (i, _, _), [trg; lam]
       | Psetfloatfield (i, _), [trg; lam] ->
+          (* writing to a block should go through CValue *)
           let block = comp_expr trg in
           let var = comp_expr lam in
-          assign (block_field block i, CTypeVar) (CIdent var, get_type var);
+          assign (block_field block i, CAnyType)
+                 (cast (get_type var) CValue (CIdent var), CValue);
           make_unit ()
 
       | Psequand, [e1; e2] -> bool_bop "&&" e1 e2

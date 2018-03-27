@@ -41,7 +41,7 @@ def build_file(filename, opt_level=0, debug=False):
                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
     if comp.returncode != 0:
-        raise BuildException("ml", comp.stdout)
+        raise BuildException("ml", comp.stderr)
 
     gcc_args = ["gcc", out_name + ".c", "-Iruntime", "-o", out_name]
     gcc_args.append("-O{}".format(opt_level))
