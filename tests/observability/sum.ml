@@ -4,4 +4,4 @@ let sum xs =
     | [] -> acc
   in go 0 xs
 
-let a = sum [3]
+let a = sum [3; 5; 1; 7; 2; 3]
