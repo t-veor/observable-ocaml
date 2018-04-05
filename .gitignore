@@ -38,3 +38,6 @@ setup.log
 # test compile outputs
 tests/**/*.c
 tests/**/*.o
+
+# python
+__pycache__

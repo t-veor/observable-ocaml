@@ -4,9 +4,10 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <math.h>
+#include "gc.h"
 
 #define static_assert _Static_assert
-#define MALLOC(v) malloc(v)
+#define MALLOC(v) GC_MALLOC(v)
 
 /* RUNTIME TYPE DECLARATIONS */
 
