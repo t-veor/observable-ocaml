@@ -2,7 +2,9 @@
 (* ML representation of a subset of C to compile to. *)
 
 type cident =
-  | CVar of Ident.t
+  | CLocalVar of Ident.t
+  | CTopLevelVar of Ident.t
+  | CTempVar of Ident.t
   | CGlobalVar of string
 
 and cexpr =

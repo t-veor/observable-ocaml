@@ -8,7 +8,7 @@ open Typecollect
 exception Undefined
 exception NotSupported of string
 
-let fresh_var name = CVar (Ident.create name)
+let fresh_var name = CTempVar (Ident.create name)
 
 (* Haskell-like list processing functions that are somehow missing from the
  * standard library
@@ -51,13 +51,29 @@ let comp_code lambda (types, externals) =
   let stmts = ref ([] : cstatement list) in
   let curr_loc = ref Location.none in
 
+  (* variable lookup *)
+
+  let var_hash = IdentHash.create 16 in
+  let mvar ?(at_root=false) id =
+    try
+      IdentHash.find var_hash id
+    with Not_found ->
+      let var = (if at_root then CTopLevelVar id else CLocalVar id) in
+      IdentHash.add var_hash id var;
+      var
+  in
+
   (* Dirty shadowing to avoid referring to the types hash all the time *)
   let set_type v t = match v with
-    | CVar i -> set_type types i t
+    | CTempVar i
+    | CLocalVar i
+    | CTopLevelVar i -> set_type types i t
     | CGlobalVar s -> ()
   in
   let get_type = function
-    | CVar i -> get_type types i
+    | CTempVar i
+    | CLocalVar i
+    | CTopLevelVar i -> get_type types i
     | CGlobalVar s -> CValue
   in
 
@@ -514,17 +530,18 @@ let comp_code lambda (types, externals) =
    * top-level function declarations and Pmakeblocks.
    *)
   and comp_root exp =
+    let mvar = mvar ~at_root:true in
     match exp with
       | Levent (body, ev) ->
           set_loc ev;
           comp_root body
       | Llet (_, _, id, Lfunction { params; body }, rest) ->
           begin
-            match get_type (CVar id) with
+            match get_type (mvar id) with
               | CClosure (rt, arg_tys) ->
                   (* TODO: dedup this and comp_expr? *)
                   let loc = unpack_loc !curr_loc in
-                  let params = List.map (fun x -> CVar x) params in
+                  let params = List.map (fun x -> mvar x) params in
 
                   (* check if the function requires eta expansion
                    * this occurs when the type of the function takes more
@@ -569,8 +586,8 @@ let comp_code lambda (types, externals) =
                     loc = Some loc;
                   } :: !funcs;
                   let closure = promote temp_var in
-                  preamble := CDecl (CVar id, get_type (CVar id)) :: !preamble;
-                  add (CAssign (CIdent (CVar id), (CIdent closure)))
+                  preamble := CDecl (mvar id, get_type (mvar id)) :: !preamble;
+                  add (CAssign (CIdent (mvar id), (CIdent closure)))
 
               | _ -> failwith "type of function was not a closure"
           end;
@@ -578,10 +595,10 @@ let comp_code lambda (types, externals) =
 
       | Llet (_, _, id, arg, rest) ->
           (* Declare a global constant *)
-          let ty = get_type (CVar id) in
-          preamble := CDecl (CVar id, ty) :: !preamble;
+          let ty = get_type (mvar id) in
+          preamble := CDecl (mvar id, ty) :: !preamble;
           let res = comp_expr ~type_hint:(Some ty) arg in
-          assign (CIdent (CVar id), ty) (CIdent res, get_type res);
+          assign (CIdent (mvar id), ty) (CIdent res, get_type res);
           comp_root rest
 
       | Lletrec (decls, body) ->
@@ -600,7 +617,8 @@ let comp_code lambda (types, externals) =
 
       | Lprim (Pmakeblock(_, Immutable, _), args, _) ->
           (* module makeblock! *)
-          let var = fresh_var "module" in
+          let id = Ident.create "module" in
+          let var = mvar id in
           let ty = CValue in
           preamble := CDecl (var, ty) :: !preamble;
           set_type var ty;
@@ -619,7 +637,7 @@ let comp_code lambda (types, externals) =
    *)
   and comp_expr ?(type_hint=None) ?(use_name=None) exp =
     match exp with
-      | Lvar id -> CVar id
+      | Lvar id -> mvar id
 
       | Lconst const ->
           let (exp, ty) = comp_constant const in
@@ -672,7 +690,7 @@ let comp_code lambda (types, externals) =
           let (rt, arg_tys) = match type_hint with
             | Some (CClosure (rt, arg_tys)) ->
               (* set types for each of the args, just in case *)
-              let args = zip (List.map (fun x -> CVar x) params) arg_tys in
+              let args = zip (List.map (fun x -> mvar x) params) arg_tys in
               List.iter (fun (arg, ty) -> set_type arg ty) args;
               (rt, arg_tys)
             | _ ->
@@ -681,12 +699,12 @@ let comp_code lambda (types, externals) =
                   try
                     IdentHash.find types id
                   with Not_found ->
-                    set_type (CVar id) CValue;
+                    set_type (mvar id) CValue;
                     CValue
                   ) params)
           in
 
-          let params = List.map (fun x -> CVar x) params in
+          let params = List.map (fun x -> mvar x) params in
 
           (* check if the function requires eta expansion
            * this occurs when the type of the function takes more
@@ -701,7 +719,7 @@ let comp_code lambda (types, externals) =
           let args = zip params arg_tys in
 
           (* find free variables *)
-          let fvs = List.map (fun x -> CVar x)
+          let fvs = List.map (fun x -> mvar x)
             (IdentSet.elements @@ free_variables exp) in
           let n_fvs = List.length fvs in
 
@@ -765,9 +783,11 @@ let comp_code lambda (types, externals) =
        *
        * [M]
        * decl(temp);
+       * decl(temp1);
+       * temp1 = var(M);
        * {
        *   decl(x);
-       *   x = var(M);
+       *   x = temp1;
        *   [N]
        *   temp = var(N)
        * }
@@ -775,11 +795,12 @@ let comp_code lambda (types, externals) =
        *)
       | Llet (_, _, id, arg, body) ->
           let arg_var = comp_expr arg in
-          let arg_ty = get_type (CVar id) in
+          let arg_ty = get_type (mvar id) in
           let temp = fresh_var "let_return" in
+          let temp1 = decl_assign ~name:"let_temp" (CIdent arg_var) arg_ty in
           let (rvar, lblock) = with_context (fun () ->
-            add (CDecl (CVar id, arg_ty));
-            assign (CIdent (CVar id), arg_ty) (CIdent arg_var, get_type arg_var);
+            add (CDecl (mvar id, arg_ty));
+            assign (CIdent (mvar id), arg_ty) (CIdent temp1, arg_ty);
             let rvar = comp_expr ~type_hint:(Some arg_ty) body in
             assign (CIdent temp, get_type rvar) (CIdent rvar, get_type rvar);
             rvar
@@ -803,8 +824,7 @@ let comp_code lambda (types, externals) =
       | Lprim (p, ls, loc) ->
           curr_loc := loc;
           comp_prim ~use_name p ls
-
-      (* Switch statements contain some which switch on ints, and some that
+(* Switch statements contain some which switch on ints, and some that
        * switch on tags
        *
        * Convert this into two sets of switch statements, one for if the value
@@ -959,11 +979,11 @@ let comp_code lambda (types, externals) =
             | Downto -> (">=", "--")
           in
 
-          let svar = comp_expr s in
-          let evar = comp_expr e in
+          let svar = decl_assign ~name:"for_start" (CIdent (comp_expr s)) CInt in
+          let evar = decl_assign ~name:"for_end" (CIdent (comp_expr e)) CInt in
 
           let (_, block) = with_context (fun () ->
-            let var = CVar id in
+            let var = mvar id in
             set_type var CInt;
             add (CDecl (var, CInt));
             assign (CIdent var, CInt) (CIdent svar, get_type svar);
@@ -1040,7 +1060,7 @@ let comp_code lambda (types, externals) =
     let to_comp = ref [] in
 
     let rec phase_one (id, lam) =
-      let var = CVar id in
+      let var = mvar ~at_root id in
       let fvs = free_variables lam in
       if IdentSet.is_empty @@ IdentSet.inter ids fvs then
         (* No free occurrence of new names, compile straight away *)

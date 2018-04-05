@@ -21,8 +21,11 @@ let rec comma_sep print_f out = function
 
 
 let rec print_cident out = function
-  | CVar var ->
-      fprintf out "%s" (Ident.unique_name var)
+  | CLocalVar id ->
+      fprintf out "%s" (Ident.name id)
+  | CTopLevelVar id
+  | CTempVar id ->
+      fprintf out "%s" (Ident.unique_name id)
   | CGlobalVar s ->
       fprintf out "%s" s
 
