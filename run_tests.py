@@ -39,7 +39,7 @@ def run_regression_tests():
                 exe_name = build.quick_build(dir_name + "/test.ml")
 
                 completed = subprocess.run(
-                    [exe_name], check=True,
+                    [exe_name], check=True, timeout=1,
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
                 if completed.stdout != expected:
