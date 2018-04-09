@@ -664,6 +664,18 @@ let comp_code lambda (types, externals) =
 
               (* TODO: deal with cvalues as function pointers *)
 
+              | CValue
+              | CAnyType ->
+                  (* gotta assume full application *)
+                  (* TODO: yeah this is a massive hole for the type system. *)
+                  let target_type = CClosure (CValue, repeat CValue (List.length args)) in
+                  let fexp = cast (get_type fvar) target_type (CIdent fvar) in
+                  let fvar = decl_assign ~name:"func_cast" fexp target_type in
+                  let new_args = List.map (fun x ->
+                    let exp = cast (get_type x) CValue (CIdent x) in
+                    decl_assign ~name:"apply_cast" exp CValue) args in
+                  apply_closure fvar new_args
+
               | _ -> failwith
                 ((Cprint.sprint Cprint.print_cident fvar) ^ " was not a function pointer")
           end

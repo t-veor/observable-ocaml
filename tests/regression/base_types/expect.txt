@@ -1,0 +1,4 @@
+Some 2
+None
+Ok 5
+Error example error

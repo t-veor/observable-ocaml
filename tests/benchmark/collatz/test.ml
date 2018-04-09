@@ -14,7 +14,7 @@ let collatz n =
 
 let _ =
   let max = ref (0, 0) in
-  for i = 1 to 1000000 do
+  for i = 1 to 5000000 do
     let _, b = !max in
     let count = collatz i in
     if count > b then

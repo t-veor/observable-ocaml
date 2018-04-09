@@ -11,6 +11,17 @@ let sprint f e =
   Buffer.contents buf
 
 
+let alphanum = Str.regexp "[^A-Za-z0-9_]"
+let get_name id =
+  let str = Ident.unique_name id in
+  let result = Str.global_substitute alphanum
+    (fun s ->
+      let c = String.get s 0 in
+      "_x" ^ string_of_int (Char.code c) ^ "_")
+    str in
+  result
+
+
 let rec comma_sep print_f out = function
   | [] -> ()
   | [x] -> print_f out x
@@ -22,7 +33,7 @@ let rec comma_sep print_f out = function
 
 let rec print_cident out = function
   | CVar var ->
-      fprintf out "%s" (Ident.unique_name var)
+      fprintf out "%s" (get_name var)
   | CGlobalVar s ->
       fprintf out "%s" s
 

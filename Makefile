@@ -1,6 +1,6 @@
 .PHONY: all clean byte native sanity
 
-OCB_FLAGS = -pkg compiler-libs -lib ocamlcommon -I src
+OCB_FLAGS = -pkg str -pkg compiler-libs -lib ocamlcommon -I src
 OCB = ocamlbuild $(OCB_FLAGS)
 
 all : native byte

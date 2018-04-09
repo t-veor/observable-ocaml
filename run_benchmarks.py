@@ -5,12 +5,15 @@ import os.path
 import subprocess
 import build
 import re
+import pickle
 
 
-def run_benchmarks(alloc_mode=True):
+def run_benchmarks(target=None, alloc_mode=True):
     results = {}
 
     for test_name in os.listdir("tests/benchmark"):
+        if target is not None and target != test_name:
+            continue
         times = {}
         dir_name = "tests/benchmark/" + test_name
         if os.path.isdir(dir_name):
@@ -86,8 +89,11 @@ def time_executable(exe_name, runs=10):
 
 def main():
     build.make()
-    run_benchmarks(alloc_mode=False)
-
+    target = None
+    if len(sys.argv) >= 2:
+        target = sys.argv[-1]
+    results = run_benchmarks(target=target, alloc_mode=True)
+    pickle.dump(results, open("results.pickle", "wb+"))
 
 if __name__ == "__main__":
     main()
