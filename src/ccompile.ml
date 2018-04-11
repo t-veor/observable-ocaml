@@ -149,14 +149,14 @@ let comp_code lambda (types, externals) =
       | CClosure (old_rt, old_args), CClosure (new_rt, new_args) ->
           let cvar = decl_assign ~name:"closure_cast_temp"
             exp (CClosure (old_rt, old_args)) in
-          CIdent (downcast_closure (old_rt, old_args) (new_rt, new_args) cvar)
+          CIdent (cast_closure (old_rt, old_args) (new_rt, new_args) cvar)
       | _ ->
     if old_ty = CAnyType then
       begin
         match new_ty with
           | CClosure (_, args) ->
               cast
-                (CClosure (CValue, repeat CValue (List.length args)))
+                (CClosure (CValue, [CValue]))
                 new_ty
                 (unpack new_ty exp)
           | _ -> unpack new_ty exp
@@ -167,7 +167,7 @@ let comp_code lambda (types, externals) =
           | CClosure (_, args) ->
               let exp = cast
                 old_ty
-                (CClosure (CValue, repeat CValue (List.length args)))
+                (CClosure (CValue, [CValue]))
                 exp
               in
               pack old_ty exp
@@ -178,7 +178,7 @@ let comp_code lambda (types, externals) =
         match new_ty with
           | CClosure (_, args) ->
               cast
-                (CClosure (CValue, repeat CValue (List.length args)))
+                (CClosure (CValue, [CValue]))
                 new_ty
                 (unbox new_ty exp)
           | _ -> unbox new_ty exp
@@ -189,7 +189,7 @@ let comp_code lambda (types, externals) =
           | CClosure (_, args) ->
               let exp = cast
                 old_ty
-                (CClosure (CValue, repeat CValue (List.length args)))
+                (CClosure (CValue, [CValue]))
                 exp
               in
               box old_ty exp
@@ -360,14 +360,42 @@ let comp_code lambda (types, externals) =
     } :: !funcs;
     fvar
 
-  (* Cast a closure down from one taking more arguments to one taking less,
-   * and returning another closure
-   * e.g. 'a -> 'b -> 'c to 'a -> ('b -> 'c)
-   *)
-  and downcast_closure (old_rt, old_args) (new_rt, new_args) closure_var =
+  and cast_closure (old_rt, old_args) (new_rt, new_args) closure_var =
     let num_args = List.length new_args in
     let (outer_args, inner_args) = split num_args old_args in
-    if inner_args = [] then
+    if List.length old_args < List.length new_args then
+      (* Have to perform an uncurrying operation! *)
+
+      (* make a function of type new_rt, new_args *)
+      let fvar = fresh_var "closure_uncurry" in
+      let closure_obj = fresh_var "closure_obj" in
+      set_type closure_obj (CClosure (new_rt, new_args));
+      let args = List.map (fun t ->
+        let arg = fresh_var "closure_arg" in
+        set_type arg t;
+        arg) new_args in
+      let (_, body) = with_context (fun () ->
+        (* pop one from the closure stack *)
+        let new_closure = pop_closure closure_obj (CClosure (old_rt, old_args))
+        in
+        let rvar = comp_apply new_closure args in
+        let rvar' = cast (get_type rvar) new_rt (CIdent rvar) in
+        let rvar'' = decl_assign ~name:"cast_return" rvar' new_rt in
+        add @@ CReturn rvar'';
+        rvar''
+      ) in
+      funcs := {
+        return_type = new_rt;
+        args = zip args new_args @ [closure_obj, get_type closure_obj];
+        id = fvar;
+        body;
+        loc = None;
+      } :: !funcs;
+
+      push_closure closure_var (func_to_var fvar) []
+        (CClosure (new_rt, new_args))
+
+    else if List.length old_args = List.length new_args then
       (* construct an intermediate closure to cast arguments to the right types
        *)
       let new_ty = CClosure (new_rt, new_args) in
@@ -399,6 +427,10 @@ let comp_code lambda (types, externals) =
       push_closure closure_var (func_to_var fvar) [] new_ty
 
     else
+      (* Cast a closure down from one taking more arguments to one taking less,
+       * and returning another closure
+       * e.g. 'a -> 'b -> 'c to 'a -> ('b -> 'c)
+       *)
       (* Construct two functions, one to be the inner function 'b -> 'c
        * the other to be the outer function 'a -> ('b -> 'c)
        *)
@@ -454,6 +486,56 @@ let comp_code lambda (types, externals) =
       (* push just the outer function onto the closure *)
       push_closure closure_var (func_to_var outer_func) []
         (CClosure (new_rt, new_args))
+
+  and comp_apply fvar args =
+    let (fvar, rt, arg_tys) = match get_type fvar with
+      | CFuncPointer (rt, arg_tys) ->
+          failwith "Bare function pointer call!"
+      | CPointer CVoid ->
+          failwith "Bare void* call!"
+      | CClosure (rt, arg_tys) ->
+          (fvar, rt, arg_tys)
+          (*
+          (* cast args to the correct types *)
+          let new_args = List.map (fun (x, t) ->
+            let exp = cast (get_type x) t (CIdent x) in
+            decl_assign ~name:"apply_cast" exp t) (zip args arg_tys) in
+          apply_closure fvar new_args
+          *)
+      | CValue
+      | CAnyType ->
+          let target_type = CClosure (CValue, [CValue]) in
+          let fexp = cast (get_type fvar) target_type (CIdent fvar) in
+          let fvar = decl_assign ~name:"func_cast" fexp target_type in
+          (fvar, CValue, [CValue])
+          (*
+          (* gotta assume full application *)
+          (* TODO: yeah this is a massive hole for the type system. *)
+          let target_type = CClosure (CValue, repeat CValue (List.length args)) in
+          let fexp = cast (get_type fvar) target_type (CIdent fvar) in
+          let fvar = decl_assign ~name:"func_cast" fexp target_type in
+          let new_args = List.map (fun x ->
+            let exp = cast (get_type x) CValue (CIdent x) in
+            decl_assign ~name:"apply_cast" exp CValue) args in
+          apply_closure fvar new_args
+          *)
+      | _ -> failwith
+        ((Cprint.sprint Cprint.print_cident fvar) ^
+         " was not a closure")
+    in
+    let (inner_args, outer_args) = split (List.length arg_tys) args in
+    (* apply inner args, then apply outer_args to the result *)
+    let inner_args_new = List.map (fun (x, t) ->
+      let exp = cast (get_type x) t (CIdent x) in
+      decl_assign ~name:"apply_cast" exp t) (zip inner_args arg_tys)
+    in
+    let result = apply_closure fvar inner_args_new in
+
+    if outer_args = [] then
+      result
+    else
+      comp_apply result outer_args
+
 
   (* Applies a closure to given args, assuming args have been casted to the
    * right type.
@@ -631,54 +713,7 @@ let comp_code lambda (types, externals) =
           let args = List.fold_left
             (fun args exp -> let arg = comp_expr exp in arg :: args)
             [] ap_args |> List.rev in
-
-          begin
-            match get_type fvar with
-              | CFuncPointer (rt, arg_tys) ->
-                  (*
-                  if List.length arg_tys <> List.length args
-                  then failwith "Partial application is not supported"
-                  else
-
-                    let exp = CCall
-                      (CIdent fvar, List.map (fun x -> CIdent x) args) in
-                    decl_assign ~name:"call_result" exp rt
-                  *)
-                  failwith "Bare function pointer call!"
-
-              | CPointer CVoid ->
-                  (*
-                  Printf.eprintf "Warning: void* call\n";
-                  let exp = CCall
-                    (CIdent fvar, List.map (fun x -> CIdent x) args) in
-                  decl_assign ~name:"call_result" exp (CPointer CVoid)
-                  *)
-                  failwith "Bare void* call!"
-
-              | CClosure (rt, arg_tys) ->
-                  (* cast args to the correct types *)
-                  let new_args = List.map (fun (x, t) ->
-                    let exp = cast (get_type x) t (CIdent x) in
-                    decl_assign ~name:"apply_cast" exp t) (zip args arg_tys) in
-                  apply_closure fvar new_args
-
-              (* TODO: deal with cvalues as function pointers *)
-
-              | CValue
-              | CAnyType ->
-                  (* gotta assume full application *)
-                  (* TODO: yeah this is a massive hole for the type system. *)
-                  let target_type = CClosure (CValue, repeat CValue (List.length args)) in
-                  let fexp = cast (get_type fvar) target_type (CIdent fvar) in
-                  let fvar = decl_assign ~name:"func_cast" fexp target_type in
-                  let new_args = List.map (fun x ->
-                    let exp = cast (get_type x) CValue (CIdent x) in
-                    decl_assign ~name:"apply_cast" exp CValue) args in
-                  apply_closure fvar new_args
-
-              | _ -> failwith
-                ((Cprint.sprint Cprint.print_cident fvar) ^ " was not a function pointer")
-          end
+          comp_apply fvar args
 
       | Lfunction { params; body } ->
           let (rt, arg_tys) = match type_hint with

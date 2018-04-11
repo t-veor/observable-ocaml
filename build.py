@@ -82,6 +82,6 @@ def comp_ocaml(filename, out_name=None, compiler="ocamlopt"):
     return out_name
 
 
-def quick_build(filename):
-    return comp_c(build_c(filename))
+def quick_build(filename, alloc_mode=True):
+    return comp_c(build_c(filename), alloc_mode=alloc_mode)
 

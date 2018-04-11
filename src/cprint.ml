@@ -187,7 +187,7 @@ and print_cfunc out = function
       print_cblock out body
 
 
-and print_ctype out = function
+and print_ctype' nested out = function
   | CUInt -> fprintf out "uintptr_t"
   | CInt -> fprintf out "intptr_t"
   | CFloat -> fprintf out "double"
@@ -206,10 +206,31 @@ and print_ctype out = function
       comma_sep print_ctype out args;
       fprintf out ")"
       (* raise (NotSupported "Function pointers are not supported") *)
-  | CClosure _ -> fprintf out "closure_type*"
+  | CClosure (rt, arg_tys) ->
+      begin
+        if not nested then begin
+          fprintf out "closure_type*";
+          fprintf out " /* "
+        end else
+          fprintf out "(* "
+      end;
+      begin
+        if arg_tys = [] then
+          fprintf out "()"
+        else
+          comma_sep (print_ctype' true) out arg_tys
+      end;
+      fprintf out " -> ";
+      print_ctype out rt;
+      if not nested then
+        fprintf out " */"
+      else
+        fprintf out " *)"
   | CClosureT -> fprintf out "closure_type"
   | CAnyType -> fprintf out "any_type"
   | CBlockT -> fprintf out "block"
+
+and print_ctype = (fun out -> print_ctype' false out)
 
 
 and print_ccode out = function
