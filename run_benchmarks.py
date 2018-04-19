@@ -37,7 +37,7 @@ def run_benchmarks(target=None, alloc_mode=True):
                                      alloc_mode=alloc_mode)
 
                 times["ocamlopt"] = time_executable(asm)
-                # time_executable(byte)
+                times["ocamlc"] = time_executable(byte)
                 times["gcc"] = time_executable(gcc)
                 times["clang"] = time_executable(clang)
 
@@ -50,9 +50,9 @@ def run_benchmarks(target=None, alloc_mode=True):
     return results
 
 
-def time_executable(exe_name, runs=10):
+def time_executable(exe_name, runs=50):
     try:
-        total_time = 0.
+        times = []
         print("Running {} for {} run(s)...".format(exe_name, runs))
         print("Run ", end="")
         for i in range(runs):
@@ -74,11 +74,11 @@ def time_executable(exe_name, runs=10):
             time += 60 * int(match.group(3)) # minutes
             time += float(match.group(4)) # seconds
 
-            total_time += time
+            times.append(time)
 
         print()
-        print("{} runs completed in {} seconds.".format(runs, total_time))
-        return total_time / runs
+        print("{} runs completed in {} seconds.".format(runs, sum(times)))
+        return times
     except subprocess.CalledProcessError as e:
         print("Executable returned nonzero exit code, aborting")
         print(e)
@@ -92,7 +92,7 @@ def main():
     target = None
     if len(sys.argv) >= 2:
         target = sys.argv[-1]
-    results = run_benchmarks(target=target, alloc_mode=True)
+    results = run_benchmarks(target=target, alloc_mode=False)
     pickle.dump(results, open("results.pickle", "wb+"))
 
 if __name__ == "__main__":

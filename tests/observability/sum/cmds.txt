@@ -1,0 +1,19 @@
+source ../../../debug/pprint.py
+break 4
+run
+print acc_1208
+step
+print x_1209
+print xs_1210
+continue
+print acc_1208
+step
+print x_1209
+print xs_1210
+continue
+continue
+step
+p acc_1208
+step
+print a_1213
+continue

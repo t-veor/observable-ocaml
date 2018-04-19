@@ -6,8 +6,9 @@ import pickle
 
 LABELS = [
     ("ocamlopt", "ocamlopt"),
-    ("gcc", "gcc -O3"),
-    ("clang", "clang -O3"),
+#    ("ocamlc", "ocamlc"),
+    ("gcc", "gcc -O3 (reduced allocations)"),
+    ("clang", "clang -O3 (reduced allocations)"),
 ]
 
 BAR_WIDTH = 0.25
@@ -23,18 +24,21 @@ def main():
 
     coords = {}
     heights = {}
+    errors = {}
+    mean = lambda i: (sum(i) / len(i)) if i else 0.
+    stddev = lambda i: ((mean([j * j for j in i]) - mean(i) ** 2) ** .5) if i else 0.
     for name, _ in LABELS:
         coords[name] = base_coords.copy()
-        heights[name] = [data[test].get(name, 0.) for test in tests]
-        heights[name] = [i if i is not None else 0. for i in heights[name]]
+        heights[name] = [mean(data[test].get(name, [])) for test in tests]
         heights[name] = np.asarray(heights[name])
+        errors[name] = [stddev(data[test].get(name, [])) for test in tests]
+        errors[name] = np.asarray(errors[name])
 
-    """
-    # normalize heights to ocamlopt
-    ocamlopt = heights["ocamlopt"].copy()
+    # normalize heights to ocamlc
+    ocamlc = np.asarray([mean(data[test].get("ocamlc", [])) for test in tests])
     for i in heights:
-        heights[i] /= ocamlopt
-    """
+        heights[i] /= ocamlc
+        errors[i] /= ocamlc
 
     for i, test in enumerate(tests):
         total = 0
@@ -48,15 +52,18 @@ def main():
                 coords[name][i] = coords[name][i] + curr * BAR_WIDTH
                 curr += 1
 
+    plt.figure(figsize=(8, 6))
+
     rects = {}
     for name, label in LABELS:
         rects[name] = plt.bar(coords[name], heights[name], BAR_WIDTH, zorder=3)
+        plt.errorbar(coords[name], heights[name], yerr=errors[name],
+                     ecolor="k", fmt="none", capsize=2, zorder=4)
 
     plt.grid(b=True, axis="y", linestyle="--", zorder=0)
 
-    plt.xticks(base_coords, tests)
-    plt.xlabel("Averaged execution time (s)")
-    plt.title("Benchmark execution times")
+    plt.xticks(base_coords, tests, rotation=30, ha="right")
+    plt.ylabel("Normalised execution time")
 
     plt.legend([rects[name][0] for name, _ in LABELS],
                [label for _, label in LABELS])

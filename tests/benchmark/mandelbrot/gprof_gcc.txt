@@ -1,0 +1,401 @@
+Flat profile:
+
+Each sample counts as 0.01 seconds.
+  %   cumulative   self              self     total           
+ time   seconds   seconds    calls  ms/call  ms/call  name    
+ 44.37      7.00     7.00                             main
+ 10.65      8.68     1.68 676990954     0.00     0.00  BOX_GEN
+  8.71     10.06     1.38                             GC_malloc_kind
+  8.24     11.36     1.30                             GC_build_fl
+  7.16     12.49     1.13                             GC_apply_to_all_blocks
+  3.55     13.05     0.56                             GC_mark_from
+  2.66     13.47     0.42                             GC_allochblk_nth
+  2.28     13.83     0.36                             GC_clear_stack_inner
+  1.77     14.11     0.28                             frame_dummy
+  1.71     14.38     0.27                             GC_reclaim_clear
+  1.05     14.54     0.17                             GC_malloc
+  0.76     14.66     0.12                             GC_find_header
+  0.63     14.76     0.10                             GC_clear_hdr_marks
+  0.63     14.86     0.10                             GC_finish_collection
+  0.48     14.94     0.08                             GC_generic_malloc_inner
+  0.44     15.01     0.07        2    35.00    35.00  print_string
+  0.44     15.08     0.07                             GC_freehblk
+  0.41     15.14     0.07                             GC_add_to_fl
+  0.38     15.20     0.06                             GC_next_used_block
+  0.32     15.25     0.05                             setup_header
+  0.25     15.29     0.04                             GC_start_reclaim
+  0.19     15.32     0.03                             GC_reclaim_block
+  0.16     15.35     0.03                             GC_allochblk
+  0.13     15.37     0.02                             GC_approx_sp
+  0.13     15.39     0.02                             GC_free_block_ending_at
+  0.13     15.41     0.02                             GC_install_counts
+  0.13     15.43     0.02                             GC_is_black_listed
+  0.13     15.45     0.02                             GC_new_hblk
+  0.13     15.47     0.02                             GC_promote_black_lists
+  0.13     15.49     0.02                             GC_push_all
+  0.13     15.51     0.02                             GC_register_dynlib_callback
+  0.13     15.53     0.02                             GC_remove_from_fl_at
+  0.13     15.55     0.02                             GC_remove_tmp_roots
+  0.10     15.56     0.02                             GC_get_first_part
+  0.06     15.57     0.01  1125000     0.00     0.00  print_byte
+  0.06     15.58     0.01                             GC_add_map_entry
+  0.06     15.59     0.01                             GC_allocobj
+  0.06     15.60     0.01                             GC_disclaim_and_reclaim_or_free_small_block
+  0.06     15.61     0.01                             GC_finalize_all
+  0.06     15.62     0.01                             GC_generic_malloc
+  0.06     15.63     0.01                             GC_initiate_gc
+  0.06     15.64     0.01                             GC_install_header
+  0.06     15.65     0.01                             GC_is_tmp_root
+  0.06     15.66     0.01                             GC_notify_or_invoke_finalizers
+  0.06     15.67     0.01                             GC_push_all_eager
+  0.06     15.68     0.01                             GC_push_conditional_with_exclusions
+  0.06     15.69     0.01                             GC_push_current_stack
+  0.06     15.70     0.01                             GC_push_next_marked_uncollectable
+  0.06     15.71     0.01                             GC_reclaim_generic
+  0.06     15.72     0.01                             GC_reclaim_small_nonempty_block
+  0.06     15.73     0.01                             GC_should_collect
+  0.06     15.74     0.01                             GC_stopped_mark
+  0.06     15.75     0.01                             GC_with_callee_saves_pushed
+  0.06     15.76     0.01                             get_index
+  0.03     15.77     0.01                             GC_alloc_large_and_clear
+  0.03     15.77     0.01                             GC_generic_malloc_inner_ignore_off_page
+  0.03     15.78     0.01                             GC_malloc_atomic
+  0.03     15.78     0.01                             GC_split_block
+  0.00     15.78     0.00        2     0.00     0.00  print_int
+  0.00     15.78     0.00        1     0.00     0.00  newline
+
+ %         the percentage of the total running time of the
+time       program used by this function.
+
+cumulative a running sum of the number of seconds accounted
+ seconds   for by this function and those listed above it.
+
+ self      the number of seconds accounted for by this
+seconds    function alone.  This is the major sort for this
+           listing.
+
+calls      the number of times this function was invoked, if
+           this function is profiled, else blank.
+
+ self      the average number of milliseconds spent in this
+ms/call    function per call, if this function is profiled,
+	   else blank.
+
+ total     the average number of milliseconds spent in this
+ms/call    function and its descendents per call, if this
+	   function is profiled, else blank.
+
+name       the name of the function.  This is the minor sort
+           for this listing. The index shows the location of
+	   the function in the gprof listing. If the index is
+	   in parenthesis it shows where it would appear in
+	   the gprof listing if it were to be printed.
+
+Copyright (C) 2012-2015 Free Software Foundation, Inc.
+
+Copying and distribution of this file, with or without modification,
+are permitted in any medium without royalty provided the copyright
+notice and this notice are preserved.
+
+		     Call graph (explanation follows)
+
+
+granularity: each sample hit covers 2 byte(s) for 0.06% of 15.78 seconds
+
+index % time    self  children    called     name
+                                                 <spontaneous>
+[1]     55.5    7.00    1.76                 main [1]
+                1.68    0.00 676990954/676990954     BOX_GEN [2]
+                0.07    0.00       2/2           print_string [16]
+                0.01    0.00 1125000/1125000     print_byte [35]
+                0.00    0.00       2/2           print_int [59]
+                0.00    0.00       1/1           newline [60]
+-----------------------------------------------
+                1.68    0.00 676990954/676990954     main [1]
+[2]     10.6    1.68    0.00 676990954         BOX_GEN [2]
+-----------------------------------------------
+                                                 <spontaneous>
+[3]      8.7    1.38    0.00                 GC_malloc_kind [3]
+-----------------------------------------------
+                                                 <spontaneous>
+[4]      8.2    1.30    0.00                 GC_build_fl [4]
+-----------------------------------------------
+                                                 <spontaneous>
+[5]      7.2    1.13    0.00                 GC_apply_to_all_blocks [5]
+-----------------------------------------------
+                                                 <spontaneous>
+[6]      3.5    0.56    0.00                 GC_mark_from [6]
+-----------------------------------------------
+                                                 <spontaneous>
+[7]      2.7    0.42    0.00                 GC_allochblk_nth [7]
+-----------------------------------------------
+                                                 <spontaneous>
+[8]      2.3    0.36    0.00                 GC_clear_stack_inner [8]
+-----------------------------------------------
+                                                 <spontaneous>
+[9]      1.8    0.28    0.00                 frame_dummy [9]
+-----------------------------------------------
+                                                 <spontaneous>
+[10]     1.7    0.27    0.00                 GC_reclaim_clear [10]
+-----------------------------------------------
+                                                 <spontaneous>
+[11]     1.0    0.17    0.00                 GC_malloc [11]
+-----------------------------------------------
+                                                 <spontaneous>
+[12]     0.8    0.12    0.00                 GC_find_header [12]
+-----------------------------------------------
+                                                 <spontaneous>
+[13]     0.6    0.10    0.00                 GC_clear_hdr_marks [13]
+-----------------------------------------------
+                                                 <spontaneous>
+[14]     0.6    0.10    0.00                 GC_finish_collection [14]
+-----------------------------------------------
+                                                 <spontaneous>
+[15]     0.5    0.08    0.00                 GC_generic_malloc_inner [15]
+-----------------------------------------------
+                0.07    0.00       2/2           main [1]
+[16]     0.4    0.07    0.00       2         print_string [16]
+-----------------------------------------------
+                                                 <spontaneous>
+[17]     0.4    0.07    0.00                 GC_freehblk [17]
+-----------------------------------------------
+                                                 <spontaneous>
+[18]     0.4    0.07    0.00                 GC_add_to_fl [18]
+-----------------------------------------------
+                                                 <spontaneous>
+[19]     0.4    0.06    0.00                 GC_next_used_block [19]
+-----------------------------------------------
+                                                 <spontaneous>
+[20]     0.3    0.05    0.00                 setup_header [20]
+-----------------------------------------------
+                                                 <spontaneous>
+[21]     0.3    0.04    0.00                 GC_start_reclaim [21]
+-----------------------------------------------
+                                                 <spontaneous>
+[22]     0.2    0.03    0.00                 GC_reclaim_block [22]
+-----------------------------------------------
+                                                 <spontaneous>
+[23]     0.2    0.03    0.00                 GC_allochblk [23]
+-----------------------------------------------
+                                                 <spontaneous>
+[24]     0.1    0.02    0.00                 GC_approx_sp [24]
+-----------------------------------------------
+                                                 <spontaneous>
+[25]     0.1    0.02    0.00                 GC_free_block_ending_at [25]
+-----------------------------------------------
+                                                 <spontaneous>
+[26]     0.1    0.02    0.00                 GC_install_counts [26]
+-----------------------------------------------
+                                                 <spontaneous>
+[27]     0.1    0.02    0.00                 GC_is_black_listed [27]
+-----------------------------------------------
+                                                 <spontaneous>
+[28]     0.1    0.02    0.00                 GC_new_hblk [28]
+-----------------------------------------------
+                                                 <spontaneous>
+[29]     0.1    0.02    0.00                 GC_promote_black_lists [29]
+-----------------------------------------------
+                                                 <spontaneous>
+[30]     0.1    0.02    0.00                 GC_push_all [30]
+-----------------------------------------------
+                                                 <spontaneous>
+[31]     0.1    0.02    0.00                 GC_register_dynlib_callback [31]
+-----------------------------------------------
+                                                 <spontaneous>
+[32]     0.1    0.02    0.00                 GC_remove_from_fl_at [32]
+-----------------------------------------------
+                                                 <spontaneous>
+[33]     0.1    0.02    0.00                 GC_remove_tmp_roots [33]
+-----------------------------------------------
+                                                 <spontaneous>
+[34]     0.1    0.02    0.00                 GC_get_first_part [34]
+-----------------------------------------------
+                0.01    0.00 1125000/1125000     main [1]
+[35]     0.1    0.01    0.00 1125000         print_byte [35]
+-----------------------------------------------
+                                                 <spontaneous>
+[36]     0.1    0.01    0.00                 GC_add_map_entry [36]
+-----------------------------------------------
+                                                 <spontaneous>
+[37]     0.1    0.01    0.00                 GC_allocobj [37]
+-----------------------------------------------
+                                                 <spontaneous>
+[38]     0.1    0.01    0.00                 GC_disclaim_and_reclaim_or_free_small_block [38]
+-----------------------------------------------
+                                                 <spontaneous>
+[39]     0.1    0.01    0.00                 GC_finalize_all [39]
+-----------------------------------------------
+                                                 <spontaneous>
+[40]     0.1    0.01    0.00                 GC_generic_malloc [40]
+-----------------------------------------------
+                                                 <spontaneous>
+[41]     0.1    0.01    0.00                 GC_initiate_gc [41]
+-----------------------------------------------
+                                                 <spontaneous>
+[42]     0.1    0.01    0.00                 GC_install_header [42]
+-----------------------------------------------
+                                                 <spontaneous>
+[43]     0.1    0.01    0.00                 GC_is_tmp_root [43]
+-----------------------------------------------
+                                                 <spontaneous>
+[44]     0.1    0.01    0.00                 GC_notify_or_invoke_finalizers [44]
+-----------------------------------------------
+                                                 <spontaneous>
+[45]     0.1    0.01    0.00                 GC_push_all_eager [45]
+-----------------------------------------------
+                                                 <spontaneous>
+[46]     0.1    0.01    0.00                 GC_push_conditional_with_exclusions [46]
+-----------------------------------------------
+                                                 <spontaneous>
+[47]     0.1    0.01    0.00                 GC_push_current_stack [47]
+-----------------------------------------------
+                                                 <spontaneous>
+[48]     0.1    0.01    0.00                 GC_push_next_marked_uncollectable [48]
+-----------------------------------------------
+                                                 <spontaneous>
+[49]     0.1    0.01    0.00                 GC_reclaim_generic [49]
+-----------------------------------------------
+                                                 <spontaneous>
+[50]     0.1    0.01    0.00                 GC_reclaim_small_nonempty_block [50]
+-----------------------------------------------
+                                                 <spontaneous>
+[51]     0.1    0.01    0.00                 GC_should_collect [51]
+-----------------------------------------------
+                                                 <spontaneous>
+[52]     0.1    0.01    0.00                 GC_stopped_mark [52]
+-----------------------------------------------
+                                                 <spontaneous>
+[53]     0.1    0.01    0.00                 GC_with_callee_saves_pushed [53]
+-----------------------------------------------
+                                                 <spontaneous>
+[54]     0.1    0.01    0.00                 get_index [54]
+-----------------------------------------------
+                                                 <spontaneous>
+[55]     0.0    0.01    0.00                 GC_alloc_large_and_clear [55]
+-----------------------------------------------
+                                                 <spontaneous>
+[56]     0.0    0.01    0.00                 GC_generic_malloc_inner_ignore_off_page [56]
+-----------------------------------------------
+                                                 <spontaneous>
+[57]     0.0    0.01    0.00                 GC_malloc_atomic [57]
+-----------------------------------------------
+                                                 <spontaneous>
+[58]     0.0    0.01    0.00                 GC_split_block [58]
+-----------------------------------------------
+                0.00    0.00       2/2           main [1]
+[59]     0.0    0.00    0.00       2         print_int [59]
+-----------------------------------------------
+                0.00    0.00       1/1           main [1]
+[60]     0.0    0.00    0.00       1         newline [60]
+-----------------------------------------------
+
+ This table describes the call tree of the program, and was sorted by
+ the total amount of time spent in each function and its children.
+
+ Each entry in this table consists of several lines.  The line with the
+ index number at the left hand margin lists the current function.
+ The lines above it list the functions that called this function,
+ and the lines below it list the functions this one called.
+ This line lists:
+     index	A unique number given to each element of the table.
+		Index numbers are sorted numerically.
+		The index number is printed next to every function name so
+		it is easier to look up where the function is in the table.
+
+     % time	This is the percentage of the `total' time that was spent
+		in this function and its children.  Note that due to
+		different viewpoints, functions excluded by options, etc,
+		these numbers will NOT add up to 100%.
+
+     self	This is the total amount of time spent in this function.
+
+     children	This is the total amount of time propagated into this
+		function by its children.
+
+     called	This is the number of times the function was called.
+		If the function called itself recursively, the number
+		only includes non-recursive calls, and is followed by
+		a `+' and the number of recursive calls.
+
+     name	The name of the current function.  The index number is
+		printed after it.  If the function is a member of a
+		cycle, the cycle number is printed between the
+		function's name and the index number.
+
+
+ For the function's parents, the fields have the following meanings:
+
+     self	This is the amount of time that was propagated directly
+		from the function into this parent.
+
+     children	This is the amount of time that was propagated from
+		the function's children into this parent.
+
+     called	This is the number of times this parent called the
+		function `/' the total number of times the function
+		was called.  Recursive calls to the function are not
+		included in the number after the `/'.
+
+     name	This is the name of the parent.  The parent's index
+		number is printed after it.  If the parent is a
+		member of a cycle, the cycle number is printed between
+		the name and the index number.
+
+ If the parents of the function cannot be determined, the word
+ `<spontaneous>' is printed in the `name' field, and all the other
+ fields are blank.
+
+ For the function's children, the fields have the following meanings:
+
+     self	This is the amount of time that was propagated directly
+		from the child into the function.
+
+     children	This is the amount of time that was propagated from the
+		child's children to the function.
+
+     called	This is the number of times the function called
+		this child `/' the total number of times the child
+		was called.  Recursive calls by the child are not
+		listed in the number after the `/'.
+
+     name	This is the name of the child.  The child's index
+		number is printed after it.  If the child is a
+		member of a cycle, the cycle number is printed
+		between the name and the index number.
+
+ If there are any cycles (circles) in the call graph, there is an
+ entry for the cycle-as-a-whole.  This entry shows who called the
+ cycle (as parents) and the members of the cycle (as children.)
+ The `+' recursive calls entry shows the number of function calls that
+ were internal to the cycle, and the calls entry for each member shows,
+ for that member, how many times it was called from other members of
+ the cycle.
+
+Copyright (C) 2012-2015 Free Software Foundation, Inc.
+
+Copying and distribution of this file, with or without modification,
+are permitted in any medium without royalty provided the copyright
+notice and this notice are preserved.
+
+Index by function name
+
+   [2] BOX_GEN                [56] GC_generic_malloc_inner_ignore_off_page [22] GC_reclaim_block
+  [36] GC_add_map_entry       [34] GC_get_first_part      [10] GC_reclaim_clear
+  [18] GC_add_to_fl           [41] GC_initiate_gc         [49] GC_reclaim_generic
+  [55] GC_alloc_large_and_clear [26] GC_install_counts    [50] GC_reclaim_small_nonempty_block
+  [23] GC_allochblk           [42] GC_install_header      [31] GC_register_dynlib_callback
+   [7] GC_allochblk_nth       [27] GC_is_black_listed     [32] GC_remove_from_fl_at
+  [37] GC_allocobj            [43] GC_is_tmp_root         [33] GC_remove_tmp_roots
+   [5] GC_apply_to_all_blocks [11] GC_malloc              [51] GC_should_collect
+  [24] GC_approx_sp           [57] GC_malloc_atomic       [58] GC_split_block
+   [4] GC_build_fl             [3] GC_malloc_kind         [21] GC_start_reclaim
+  [13] GC_clear_hdr_marks      [6] GC_mark_from           [52] GC_stopped_mark
+   [8] GC_clear_stack_inner   [28] GC_new_hblk            [53] GC_with_callee_saves_pushed
+  [38] GC_disclaim_and_reclaim_or_free_small_block [19] GC_next_used_block [9] frame_dummy
+  [39] GC_finalize_all        [44] GC_notify_or_invoke_finalizers [54] get_index (headers.c)
+  [12] GC_find_header         [29] GC_promote_black_lists  [1] main
+  [14] GC_finish_collection   [30] GC_push_all            [60] newline
+  [25] GC_free_block_ending_at [45] GC_push_all_eager     [35] print_byte
+  [17] GC_freehblk            [46] GC_push_conditional_with_exclusions [59] print_int
+  [40] GC_generic_malloc      [47] GC_push_current_stack  [16] print_string
+  [15] GC_generic_malloc_inner [48] GC_push_next_marked_uncollectable [20] setup_header (allchblk.c)

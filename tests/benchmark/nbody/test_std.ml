@@ -5,7 +5,7 @@
 let print_float f = Printf.printf "%f" f
 let newline () = Printf.printf "\n"
 
-let niter = 500000
+let niter = 2500000
 
 let pi = 3.141592653589793
 let solar_mass = 4. *. pi *. pi

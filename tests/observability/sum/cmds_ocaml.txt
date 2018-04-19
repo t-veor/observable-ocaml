@@ -1,0 +1,15 @@
+break @ Test_ocaml 4
+run
+print acc
+print x
+print xs
+run
+print x
+print xs
+run
+run
+print acc
+step
+next
+print a
+run

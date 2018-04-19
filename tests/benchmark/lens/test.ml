@@ -159,7 +159,7 @@ let prepare i =
   let r = { p1; p2 } in
   r
 
-let niter = 1000000
+let niter = 5000000
 
 let _ = for i = 0 to niter do
   print_int (lens_rect_area (prepare i));

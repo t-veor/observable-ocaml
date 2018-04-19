@@ -1,0 +1,46 @@
+	OCaml Debugger version 4.05.0
+
+(ocd) break @ Test_ocaml 4
+Loading program... done.
+Breakpoint 1 at 106800: file test_ocaml.ml, line 4, characters 15-81
+(ocd) run
+Time: 24 - pc: 106832 - module Test_ocaml
+Breakpoint: 1
+5   | x :: xs -> <|b|>foldl f (f acc x) xs
+(ocd) print acc
+acc: 'a = <poly>
+(ocd) print x
+x: 'a = <poly>
+(ocd) print xs
+xs: 'a list = [<poly>; <poly>]
+(ocd) run
+Time: 26 - pc: 106832 - module Test_ocaml
+Breakpoint: 1
+5   | x :: xs -> <|b|>foldl f (f acc x) xs
+(ocd) print x
+x: 'a = <poly>
+(ocd) print xs
+xs: 'a list = [<poly>]
+(ocd) run
+Time: 28 - pc: 106832 - module Test_ocaml
+Breakpoint: 1
+5   | x :: xs -> <|b|>foldl f (f acc x) xs
+(ocd) run
+Time: 30 - pc: 106864 - module Test_ocaml
+Breakpoint: 1
+6   | [] -> <|b|>acc
+(ocd) print acc
+acc: 'a = <poly>
+(ocd) step
+Time: 31 - pc: 107040 - module Test_ocaml
+10 let a = sum [1; 2; 3]<|a|>
+(ocd) next
+Time: 47 - pc: 107052 - module Test_ocaml
+11 let _ = print_int a<|a|>; newline ()
+(ocd) print a
+a: int = 6
+(ocd) run
+6
+Time: 79
+Program exit.
+(ocd)

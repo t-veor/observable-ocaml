@@ -9,7 +9,7 @@ external print_byte : int -> unit = "print_byte"
 
 let niter = 50
 let limit = 4.0
-let w = 4000
+let w = 3000
 let h = w
 
 let _ =

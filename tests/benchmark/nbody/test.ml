@@ -6,7 +6,7 @@ external print_float : float -> unit = "print_double"
 external newline : unit -> unit = "newline"
 external sqrt : float -> float = "sqrt"
 
-let niter = 500000
+let niter = 2500000
 
 let pi = 3.141592653589793
 let solar_mass = 4. *. pi *. pi

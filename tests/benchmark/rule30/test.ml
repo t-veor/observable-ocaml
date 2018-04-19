@@ -15,7 +15,7 @@ let next xs =
     | (r :: [] as xs) -> r :: r :: go xs
     | [] -> []
 
-let niter = 4000
+let niter = 8000
 
 let rec iterate n f x =
   match n with

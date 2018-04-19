@@ -1,0 +1,68 @@
+GNU gdb (Ubuntu 7.11.1-0ubuntu1~16.5) 7.11.1
+Copyright (C) 2016 Free Software Foundation, Inc.
+License GPLv3+: GNU GPL version 3 or later <http://gnu.org/licenses/gpl.html>
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.  Type "show copying"
+and "show warranty" for details.
+This GDB was configured as "x86_64-linux-gnu".
+Type "show configuration" for configuration details.
+For bug reporting instructions, please see:
+<http://www.gnu.org/software/gdb/bugs/>.
+Find the GDB manual and other documentation resources online at:
+<http://www.gnu.org/software/gdb/documentation/>.
+For help, type "help".
+Type "apropos word" to search for commands related to "word"...
+Reading symbols from test_gdb...done.
+(gdb) source ../../../debug/pprint.py
+(gdb) break 4
+Breakpoint 1 at 0x400fdc: file test.ml, line 4.
+(gdb) run
+Starting program: /home/taylor/Dropbox/Coursework/University Coursework/observable-ocaml/tests/observability/sum/test_gdb 
+
+Breakpoint 1, local_func_1222 (f_1207=<closure>, acc_1208=0, param_1211=[0: 1 [0: 2 [0: 3 0]]], closure_obj_1221=<closure>) at test.ml:4
+4	let rec foldl f acc = function
+(gdb) print acc_1208
+$1 = 0
+(gdb) step
+5	  | x :: xs -> foldl f (f acc x) xs
+(gdb) print x_1209
+$2 = 1
+(gdb) print xs_1210
+$3 = [0: 2 [0: 3 0]]
+(gdb) continue
+Continuing.
+
+Breakpoint 1, local_func_1222 (f_1207=<closure>, acc_1208=1, param_1211=[0: 2 [0: 3 0]], closure_obj_1221=<closure>) at test.ml:4
+4	let rec foldl f acc = function
+(gdb) print acc_1208
+$4 = 1
+(gdb) step
+5	  | x :: xs -> foldl f (f acc x) xs
+(gdb) print x_1209
+$5 = 2
+(gdb) print xs_1210
+$6 = [0: 3 0]
+(gdb) continue
+Continuing.
+
+Breakpoint 1, local_func_1222 (f_1207=<closure>, acc_1208=3, param_1211=[0: 3 0], closure_obj_1221=<closure>) at test.ml:4
+4	let rec foldl f acc = function
+(gdb) continue
+Continuing.
+
+Breakpoint 1, local_func_1222 (f_1207=<closure>, acc_1208=6, param_1211=0, closure_obj_1221=<closure>) at test.ml:4
+4	let rec foldl f acc = function
+(gdb) step
+6	  | [] -> acc
+(gdb) p acc_1208
+$7 = 6
+(gdb) step
+main () at test.ml:11
+11	let _ = print_int a; newline ()
+(gdb) print a_1213
+$8 = 6
+(gdb) continue
+Continuing.
+6
+[Inferior 1 (process 32184) exited normally]
+(gdb) 
