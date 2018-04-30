@@ -9,6 +9,9 @@
 
 # (ignores all files without extensions)
 
+# unignore LICENSE file
+!LICENSE
+
 *.swp
 
 *.annot
