@@ -7,8 +7,8 @@ import pickle
 LABELS = [
     ("ocamlopt", "ocamlopt"),
 #    ("ocamlc", "ocamlc"),
-    ("gcc", "gcc -O3 (reduced allocations)"),
-    ("clang", "clang -O3 (reduced allocations)"),
+    ("gcc", "ooc + gcc -O3"),
+    ("clang", "ooc + clang -O3"),
 ]
 
 BAR_WIDTH = 0.25
@@ -37,8 +37,8 @@ def main():
     # normalize heights to ocamlc
     ocamlc = np.asarray([mean(data[test].get("ocamlc", [])) for test in tests])
     for i in heights:
-        heights[i] /= ocamlc
-        errors[i] /= ocamlc
+        errors[i] = errors[i] * ocamlc / heights[i] / heights[i]
+        heights[i] = ocamlc / heights[i]
 
     for i, test in enumerate(tests):
         total = 0
@@ -60,10 +60,14 @@ def main():
         plt.errorbar(coords[name], heights[name], yerr=errors[name],
                      ecolor="k", fmt="none", capsize=2, zorder=4)
 
-    plt.grid(b=True, axis="y", linestyle="--", zorder=0)
+    plt.yscale("log")
+    plt.grid(b=True, which="both", axis="y", linestyle="--", zorder=0)
+    plt.axhline(1, color="k", zorder=5, lw=2)
 
     plt.xticks(base_coords, tests, rotation=30, ha="right")
-    plt.ylabel("Normalised execution time")
+    plt.yticks([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20],
+               [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20])
+    plt.ylabel("Speedup factor relative to bytecode compiler (higher is better)")
 
     plt.legend([rects[name][0] for name, _ in LABELS],
                [label for _, label in LABELS])
